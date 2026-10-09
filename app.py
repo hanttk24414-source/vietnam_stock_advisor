@@ -193,6 +193,11 @@ except Exception as exc:
     st.info("Bạn có thể nhập mã cổ phiếu khác; chỉ mã có giá, BCTC và dữ liệu ngành phù hợp mới được định giá. Không tự dùng số liệu của HPG cho mã khác.")
     st.stop()
 
+if stock_raw.get("data_mode") == "DEMO":
+    st.warning(f"⚠️ {selected_ticker}: Báo cáo tài chính đang dùng dữ liệu MẪU (DEMO), không phải số liệu kiểm chứng.")
+else:
+    st.caption(f"Nguồn BCTC: {stock_raw.get('data_source', 'chưa rõ')} | Dữ liệu vĩ mô và các chuẩn ngành của bản này là giả định/mẫu, cần đối chiếu trước khi đầu tư.")
+
 # ----------------- HEADER & EXECUTIVE KPI CARDS -----------------
 st.markdown(f"<div class='main-title'>HỆ THỐNG PHÂN TÍCH CƠ HỘI ĐẦU TƯ: {selected_ticker} ({stock_raw.get('exchange', 'HOSE')})</div>", unsafe_allow_html=True)
 st.markdown(f"<div class='sub-title'><b>{stock_raw.get('name', '')}</b>  |  Ngành: <b>{stock_raw.get('sector', '')}</b>  |  Ngày cập nhật: <b>{analysis_date.strftime('%d/%m/%Y')}</b></div>", unsafe_allow_html=True)
