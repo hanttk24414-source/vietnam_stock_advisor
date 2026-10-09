@@ -232,6 +232,18 @@ def create_investment_report_pdf(
     )
 
     story = []
+    # Chỉ báo hiển thị ngay trong báo cáo để không nhầm dữ liệu demo với dữ liệu thị trường.
+    if os.getenv("STOCK_ADVISOR_DEMO", "").strip().lower() in {"1", "true", "yes"}:
+        story.append(Paragraph(
+            "<b>CHẾ ĐỘ DEMO - SỐ LIỆU MẪU / CHƯA XÁC MINH. "
+            "KHÔNG SỬ DỤNG ĐỂ RA QUYẾT ĐỊNH ĐẦU TƯ.</b>",
+            ParagraphStyle(
+                "DemoDisclaimer", parent=body_bold,
+                textColor=colors.HexColor("#C53030"), fontSize=10,
+                leading=14, spaceBefore=4, spaceAfter=12,
+            )
+        ))
+
 
     # ==================== TRANG 1: TỔNG QUAN ĐẦU TƯ ====================
     # Header tổ chức
