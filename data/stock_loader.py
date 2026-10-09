@@ -22,6 +22,26 @@ from config import CACHE_DIR, SUPPORTED_TICKERS
 def _demo_mode():
     return os.getenv('STOCK_ADVISOR_DEMO', '').lower() in {'1', 'true', 'yes'}
 
+def infer_sector_code(info: dict) -> str:
+    """Map Yahoo sector/industry labels to one of the locally supported sectors."""
+    sector = str(info.get('sector') or '').lower()
+    industry = str(info.get('industry') or '').lower()
+    if any(x in industry for x in ('bank', 'credit services')) or 'bank' in sector:
+        return 'BANKING'
+    if any(x in industry for x in ('capital markets', 'asset management', 'brokerage')):
+        return 'BROKERAGE'
+    if any(x in industry for x in ('steel', 'metal fabrication')) or 'steel' in sector:
+        return 'STEEL'
+    if any(x in industry for x in ('software', 'information technology services', 'semiconductors')):
+        return 'TECH'
+    if 'technology' in sector and 'hardware' not in industry:
+        return 'TECH'
+    if any(x in industry for x in ('real estate development', 'residential construction')):
+        return 'REAL_ESTATE'
+    if any(x in industry for x in ('specialty retail', 'grocery stores', 'department stores', 'consumer electronics')):
+        return 'RETAIL'
+    return 'GENERAL'
+
 def clean_ticker(ticker: str) -> str:
     """Loại bỏ hậu tố .VN hoặc khoảng trắng nếu có."""
     return ticker.strip().upper().replace(".VN", "")
@@ -163,6 +183,7 @@ def fetch_stock_fundamentals(ticker: str) -> Dict[str, Any]:
                 fundamentals['exchange'] = info.get('exchange') or 'Chưa xác định'
                 fundamentals['sector'] = info.get('sector') or 'Chưa phân loại ngành'
                 fundamentals['shares_outstanding'] = int(info.get('sharesOutstanding') or 0)
+                fundamentals['sector_code'] = infer_sector_code(info)
             fundamentals["pe"] = round(float(info.get("trailingPE", 0.0) or 0.0), 2)
             fundamentals["forward_pe"] = round(float(info.get("forwardPE", 0.0) or 0.0), 2)
             fundamentals["pb"] = round(float(info.get("priceToBook", 0.0) or 0.0), 2)
