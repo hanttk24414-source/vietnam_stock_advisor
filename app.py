@@ -23,6 +23,7 @@ from analytics.fundamental_engine import analyze_fundamentals
 from analytics.valuation_engine import perform_valuation
 from analytics.scorecard_engine import calculate_quant_scorecard, build_scenario_matrix
 from reporting.pdf_generator import create_investment_report_pdf
+from data.dnse_loader import dnse_configured
 
 # Cấu hình trang Streamlit
 st.set_page_config(
@@ -98,6 +99,11 @@ st.markdown("""
 with st.sidebar:
     st.markdown("### ⚙️ BỘ ĐIỀU KHIỂN HỆ THỐNG")
     
+    if dnse_configured():
+        st.success("Nguồn giá DNSE: đã cấu hình API (sẽ ưu tiên DNSE khi truy vấn).")
+    else:
+        st.info("Chưa cấu hình DNSE: tạo file .env trên máy với DNSE_API_KEY và DNSE_API_SECRET.")
+
     # 1. Chọn mã cổ phiếu
     ticker_options = list(SUPPORTED_TICKERS.keys())
     selected_ticker = st.selectbox(
@@ -154,6 +160,10 @@ try:
         # 2. Dữ liệu Cổ phiếu
         price_df = fetch_stock_price_history(selected_ticker, days_to_fetch)
         stock_raw = fetch_stock_fundamentals(selected_ticker)
+        if not price_df.empty:
+            stock_raw["current_price"] = float(price_df["close"].iloc[-1])
+            stock_raw["price_data_source"] = price_df.attrs.get("data_source", "VNDirect/Yahoo")
+
         
         # 3. Động cơ Phân tích
         tech_analysis = compute_technical_indicators(price_df, vnindex_df)
@@ -198,6 +208,7 @@ if stock_raw.get("data_mode") == "DEMO":
 else:
     st.caption(f"Nguồn BCTC: {stock_raw.get('data_source', 'chưa rõ')} | Dữ liệu vĩ mô và các chuẩn ngành của bản này là giả định/mẫu, cần đối chiếu trước khi đầu tư.")
 
+st.caption(f"Nguồn giá: {stock_raw.get('price_data_source', 'chưa xác định')} | Nguồn BCTC: {stock_raw.get('data_source', 'chưa xác định')}")
 # ----------------- HEADER & EXECUTIVE KPI CARDS -----------------
 st.markdown(f"<div class='main-title'>HỆ THỐNG PHÂN TÍCH CƠ HỘI ĐẦU TƯ: {selected_ticker} ({stock_raw.get('exchange', 'HOSE')})</div>", unsafe_allow_html=True)
 st.markdown(f"<div class='sub-title'><b>{stock_raw.get('name', '')}</b>  |  Ngành: <b>{stock_raw.get('sector', '')}</b>  |  Ngày cập nhật: <b>{analysis_date.strftime('%d/%m/%Y')}</b></div>", unsafe_allow_html=True)
