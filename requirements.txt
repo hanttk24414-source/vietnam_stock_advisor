@@ -8,3 +8,5 @@ requests>=2.30.0
 yfinance>=0.2.40
 pillow>=10.0.0
 scipy>=1.12.0
+dnse-sdk-openapi
+python-dotenv>=1.0.0
