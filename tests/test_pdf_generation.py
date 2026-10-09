@@ -4,6 +4,7 @@ Unit tests kiểm tra việc tạo báo cáo PDF hoàn chỉnh.
 
 import os
 import unittest
+import os
 from pathlib import Path
 from data.macro_loader import fetch_macro_indicators, fetch_vnindex_history
 from data.stock_loader import fetch_stock_price_history, fetch_stock_fundamentals
@@ -18,6 +19,7 @@ from reporting.pdf_generator import create_investment_report_pdf
 class TestPDFGeneration(unittest.TestCase):
 
     def test_pdf_generation_flow(self):
+        os.environ['STOCK_ADVISOR_DEMO'] = '1'
         sym = "HPG"
         macro_raw = fetch_macro_indicators()
         vn_df = fetch_vnindex_history(120)
