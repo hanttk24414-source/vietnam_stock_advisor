@@ -98,6 +98,16 @@ st.markdown("""
 with st.sidebar:
     st.markdown("### ⚙️ BỘ ĐIỀU KHIỂN HỆ THỐNG")
     
+    demo_mode = st.checkbox(
+        "Chế độ DEMO (dữ liệu mẫu, không sử dụng để đầu tư)",
+        value=True,
+        help="Bản này chưa có nguồn vĩ mô có thể kiểm chứng. Chỉ bật demo để trình diễn."
+    )
+    if demo_mode:
+        os.environ["STOCK_ADVISOR_DEMO"] = "1"
+    else:
+        os.environ.pop("STOCK_ADVISOR_DEMO", None)
+
     # 1. Chọn mã cổ phiếu
     ticker_options = list(SUPPORTED_TICKERS.keys())
     selected_ticker = st.selectbox(
@@ -141,6 +151,12 @@ with st.sidebar:
         "Ghi chú của chuyên viên phân tích:",
         "Khuyến nghị tích lũy dần theo vùng giá mục tiêu. Chú ý diễn biến thanh khoản thị trường chung."
     )
+
+if demo_mode:
+    st.warning("⚠️ CHẾ ĐỘ DEMO: Dữ liệu vĩ mô, báo cáo tài chính hoặc giá có thể là dữ liệu giả lập/mẫu; kết quả KHÔNG dùng để ra quyết định đầu tư.")
+else:
+    st.error("Chế độ dữ liệu THẬT đang tạm khóa vì chưa có nguồn dữ liệu vĩ mô xác minh. Không thể xuất báo cáo đầu tư từ số liệu giả.")
+    st.stop()
 
 # ----------------- TẢI & XỬ LÝ DỮ LIỆU ĐA TẦNG -----------------
 with st.spinner(f"Đang phân tích cơ hội đầu tư cho mã {selected_ticker}..."):
@@ -595,7 +611,7 @@ with tab5:
     if st.button("🚀 BẮT ĐẦU TẠO BÁO CÁO ĐẦU TƯ PDF", type="primary", use_container_width=True):
         with st.spinner("Đang kết xuất biểu đồ và biên soạn tài liệu PDF..."):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            pdf_filename = f"BaoCao_DauTu_{selected_ticker}_{timestamp}.pdf"
+            pdf_filename = f"DEMO_BaoCao_DauTu_{selected_ticker}_{timestamp}.pdf"
             
             inc_list = []
             if inc_macro: inc_list.append("macro")
@@ -620,7 +636,7 @@ with tab5:
                 output_filename=pdf_filename,
                 included_sections=inc_list,
                 analysis_date=analysis_date.strftime("%d/%m/%Y"),
-                custom_notes=custom_analyst_notes
+                custom_notes='CHẾ ĐỘ DEMO - SỐ LIỆU MẪU / KHÔNG DÙNG ĐẦU TƯ. ' + custom_analyst_notes
             )
             
             st.success(f"✅ Báo cáo PDF đã được tạo thành công: `{pdf_filename}`!")
