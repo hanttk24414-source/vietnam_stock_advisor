@@ -1,5 +1,21 @@
 # HỆ THỐNG PHÂN TÍCH CƠ HỘI ĐẦU TƯ CỔ PHIẾU VIỆT NAM (VIETNAM STOCK ADVISOR)
 
+## KẾT NỐI DNSE TRÊN WINDOWS (CẬP NHẬT 09/10/2026)
+
+Bạn có thể tải toàn bộ mã nguồn xuống bằng **Code → Download ZIP** trên GitHub, hoặc chạy `git pull origin main` ở máy đã clone repo.
+
+1. Mở Terminal trong thư mục dự án. Cài thư viện: `python -m pip install -r requirements.txt`
+2. Copy file `.env.example` thành **`.env`** (cùng cấp với `app.py`). Trên PowerShell: `Copy-Item .env.example .env`
+3. Mở `.env` trên máy cá nhân, điền hai dòng `DNSE_API_KEY=...` và `DNSE_API_SECRET=...`. Không gửi hai khóa trong chat, không commit `.env` lên GitHub.
+4. Chạy `python -m streamlit run app.py`, truy cập http://localhost:8501.
+5. Trong sidebar, khi khóa đã được nạp sẽ hiện **Nguồn giá DNSE: đã cấu hình API**. Nhập mã cổ phiếu; bộ tải giá sẽ thử DNSE trước, sau đó VNDirect/Yahoo khi DNSE không khả dụng. Xem dòng **Nguồn giá** để xác nhận dữ liệu đến từ đâu.
+6. Kiểm tra mã cụ thể: `python -m unittest tests.test_dnse_loader -v`.
+
+*DNSE cung cấp nguồn giá OHLCV, không mặc nhiên cung cấp bộ BCTC, vĩ mô hoặc các giả định định giá của hệ thống này. Khi API thất bại, chương trình có thể dùng nguồn khác và phải ghi rõ nguồn. Không tự nhận đã kết nối thành công trước khi kiểm tra máy có khóa hợp lệ và có Internet. Dữ liệu vĩ mô/ngành sẵn có trong code có các giả định chưa kiểm chứng; không dùng đầu ra để ra quyết định đầu tư thực.*
+
+---
+
+
 > **Antigravity Investment Intelligence Platform**  
 > Dự án được thiết kế và xây dựng bởi đội ngũ liên ngành: Data Engineer, Data Analyst, Chuyên gia Phân tích Chứng khoán Việt Nam, Quant Analyst, Software Engineer và Chuyên gia Thiết kế Báo cáo Đầu tư Chuyên nghiệp.
 
