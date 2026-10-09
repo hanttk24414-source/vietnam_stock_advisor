@@ -7,6 +7,7 @@ Ví dụ:
 """
 
 import argparse
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -35,8 +36,12 @@ def run_analysis(
     output_filename: str = None,
     wacc: float = None,
     g: float = None,
-    notes: str = None
+    notes: str = None,
+    demo: bool = False
 ) -> str:
+    if not demo:
+        raise RuntimeError('Chế độ THẬT chưa có nguồn dữ liệu vĩ mô xác minh. Dùng --demo cho bản trình diễn; không được dùng số liệu mẫu để đầu tư.')
+    os.environ['STOCK_ADVISOR_DEMO'] = '1'
     ticker = clean_ticker(ticker)
     print(f"\n==================================================================")
     print(f" KHỞI CHẠY PHÂN TÍCH ĐẦU TƯ CỔ PHIẾU: {ticker}")
@@ -91,7 +96,7 @@ def run_analysis(
     print("[5/5] Đang tạo báo cáo phân tích đầu tư PDF chuyên nghiệp...")
     if output_filename is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_filename = f"BaoCao_{ticker}_{timestamp}.pdf"
+        output_filename = f"DEMO_BaoCao_{ticker}_{timestamp}.pdf"
 
     pdf_path = create_investment_report_pdf(
         ticker=ticker,
@@ -106,7 +111,7 @@ def run_analysis(
         price_df=price_df,
         output_filename=output_filename,
         analysis_date=datetime.now().strftime("%d/%m/%Y"),
-        custom_notes=notes
+        custom_notes="CHẾ ĐỘ DEMO - KHÔNG DÙNG ĐẦU TƯ. " + (notes or "")
     )
 
     print(f"\n✅ HOÀN TẤT! File báo cáo PDF đã được lưu thành công tại:")
@@ -123,6 +128,7 @@ def main():
     parser.add_argument("--g", type=float, default=None, help="Tốc độ tăng trưởng dài hạn vĩnh viễn (ví dụ: 0.035 cho 3.5%)")
     parser.add_argument("--notes", type=str, default=None, help="Ghi chú thêm của chuyên viên phân tích")
     
+    parser.add_argument("--demo", action="store_true", help="Chỉ trình diễn với dữ liệu mẫu, không dùng để đầu tư")
     args = parser.parse_args()
     run_analysis(
         ticker=args.ticker,
@@ -130,7 +136,8 @@ def main():
         output_filename=args.output,
         wacc=args.wacc,
         g=args.g,
-        notes=args.notes
+        notes=args.notes,
+        demo=args.demo
     )
 
 if __name__ == "__main__":

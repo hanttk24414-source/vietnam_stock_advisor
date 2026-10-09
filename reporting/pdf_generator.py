@@ -94,7 +94,12 @@ class NumberedCanvas(canvas.Canvas):
 
         self.setFont("Arial", 7.5)
         self.setFillColor(colors.HexColor("#718096"))
-        disclaimer_short = "Nguồn: Dữ liệu kiểm chứng từ HOSE, VNDirect, Yahoo Finance & BCTC kiểm toán. Báo cáo nhằm mục đích tham khảo đầu tư."
+        demo_mode = os.getenv("STOCK_ADVISOR_DEMO", "").strip().lower() in {"1", "true", "yes"}
+        disclaimer_short = (
+            "DEMO - SO LIEU MAU CHUA XAC MINH - KHONG DUNG DE DAU TU"
+            if demo_mode else
+            "Nguon: can doi chieu gia, BCTC va vi mo truoc khi su dung."
+        )
         self.drawString(36, 22, disclaimer_short)
 
         page_str = f"Trang {self._pageNumber} / {page_count}"
@@ -232,6 +237,18 @@ def create_investment_report_pdf(
     )
 
     story = []
+    # Chỉ báo hiển thị ngay trong báo cáo để không nhầm dữ liệu demo với dữ liệu thị trường.
+    if os.getenv("STOCK_ADVISOR_DEMO", "").strip().lower() in {"1", "true", "yes"}:
+        story.append(Paragraph(
+            "<b>CHẾ ĐỘ DEMO - SỐ LIỆU MẪU / CHƯA XÁC MINH. "
+            "KHÔNG SỬ DỤNG ĐỂ RA QUYẾT ĐỊNH ĐẦU TƯ.</b>",
+            ParagraphStyle(
+                "DemoDisclaimer", parent=body_bold,
+                textColor=colors.HexColor("#C53030"), fontSize=10,
+                leading=14, spaceBefore=4, spaceAfter=12,
+            )
+        ))
+
 
     # ==================== TRANG 1: TỔNG QUAN ĐẦU TƯ ====================
     # Header tổ chức

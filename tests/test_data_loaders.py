@@ -3,12 +3,17 @@ Unit tests kiểm tra các module thu thập và nạp dữ liệu.
 """
 
 import unittest
+import os
 import pandas as pd
 from data.macro_loader import fetch_macro_indicators, fetch_vnindex_history
 from data.industry_loader import get_industry_analysis, get_all_industries
 from data.stock_loader import fetch_stock_price_history, fetch_stock_fundamentals, clean_ticker
 
 class TestDataLoaders(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        os.environ['STOCK_ADVISOR_DEMO'] = '1'
+
 
     def test_clean_ticker(self):
         self.assertEqual(clean_ticker("HPG.VN"), "HPG")
