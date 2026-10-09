@@ -8,6 +8,7 @@ Nguồn dữ liệu:
 """
 
 import json
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,9 @@ import requests
 import yfinance as yf
 
 from config import CACHE_DIR, SUPPORTED_TICKERS
+
+def _demo_mode():
+    return os.getenv('STOCK_ADVISOR_DEMO', '').lower() in {'1', 'true', 'yes'}
 
 def clean_ticker(ticker: str) -> str:
     """Loại bỏ hậu tố .VN hoặc khoảng trắng nếu có."""
@@ -82,7 +86,7 @@ def fetch_stock_price_history(ticker: str, days: int = 365) -> pd.DataFrame:
 
     # 3. Thử nạp từ Cache
     cache_file = CACHE_DIR / f"{sym}_history.json"
-    if cache_file.exists():
+    if _demo_mode() and cache_file.exists():
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
                 raw = json.load(f)
@@ -92,6 +96,9 @@ def fetch_stock_price_history(ticker: str, days: int = 365) -> pd.DataFrame:
                 return df.tail(days)
         except Exception:
             pass
+
+    if not _demo_mode():
+        raise RuntimeError(f'Không tải được giá thật của {sym}; không sử dụng dữ liệu giả lập.')
 
     # 4. Fallback mô phỏng nếu tất cả các nguồn trực tuyến bị gián đoạn
     dates = pd.date_range(end=datetime.now(), periods=days, freq="B")
@@ -135,7 +142,7 @@ def fetch_stock_fundamentals(ticker: str) -> Dict[str, Any]:
         "ticker": sym,
         "name": company_meta["name"],
         "sector": company_meta["sector"],
-        "sector_code": company_meta.get("sector_code", "STEEL"),
+        "sector_code": company_meta.get("sector_code", "GENERAL"),
         "exchange": company_meta["exchange"],
         "shares_outstanding": company_meta["shares_outstanding"],
         "description": company_meta["description"],
@@ -151,6 +158,11 @@ def fetch_stock_fundamentals(ticker: str) -> Dict[str, Any]:
         info = stock.info
         if info and len(info) > 10 and info.get("regularMarketPrice") is not None:
             fundamentals["current_price"] = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0.0)
+            if sym not in SUPPORTED_TICKERS:
+                fundamentals['name'] = info.get('longName') or info.get('shortName') or sym
+                fundamentals['exchange'] = info.get('exchange') or 'Chưa xác định'
+                fundamentals['sector'] = info.get('sector') or 'Chưa phân loại ngành'
+                fundamentals['shares_outstanding'] = int(info.get('sharesOutstanding') or 0)
             fundamentals["pe"] = round(float(info.get("trailingPE", 0.0) or 0.0), 2)
             fundamentals["forward_pe"] = round(float(info.get("forwardPE", 0.0) or 0.0), 2)
             fundamentals["pb"] = round(float(info.get("priceToBook", 0.0) or 0.0), 2)
@@ -219,13 +231,18 @@ def fetch_stock_fundamentals(ticker: str) -> Dict[str, Any]:
 
     # Nếu không lấy được hoặc thiếu, sử dụng dữ liệu chuẩn hoá kiểm chứng được từ BCTC các năm của doanh nghiệp
     if not fetched_live or "financial_history" not in fundamentals or len(fundamentals.get("financial_history", [])) < 3:
-        # Load benchmarked verified data cho các mã tiêu biểu
+        if not _demo_mode() or sym not in SUPPORTED_TICKERS:
+            raise RuntimeError(f'Không có báo cáo tài chính đầy đủ cho {sym}. Không thể định giá đáng tin cậy; không sử dụng dữ liệu HPG thay thế.')
+        # Chỉ sử dụng bộ dữ liệu mẫu khi cố ý bật DEMO.
         preset_data = get_preset_fundamentals(sym)
         for k, v in preset_data.items():
             if k not in fundamentals or fundamentals[k] == 0.0 or fundamentals[k] is None:
                 fundamentals[k] = v
         if "financial_history" not in fundamentals:
             fundamentals["financial_history"] = preset_data.get("financial_history", [])
+
+    fundamentals['data_mode'] = 'LIVE' if fetched_live else 'DEMO'
+    fundamentals['data_source'] = 'Yahoo Finance' if fetched_live else 'MẪU DEMO CHƯA XÁC MINH'
 
     # Lưu cache
     try:
