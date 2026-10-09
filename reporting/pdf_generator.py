@@ -42,6 +42,12 @@ def setup_pdf_fonts():
         ("Arial-Italic", os.path.join(font_dir, "ariali.ttf")),
         ("Arial-BoldItalic", os.path.join(font_dir, "arialbi.ttf")),
     ]
+    if not os.path.exists(fonts[0][1]):
+        base = "/usr/share/fonts/truetype/dejavu"
+        fonts = [("Arial", f"{base}/DejaVuSans.ttf"),
+                 ("Arial-Bold", f"{base}/DejaVuSans-Bold.ttf"),
+                 ("Arial-Italic", f"{base}/DejaVuSansMono-Oblique.ttf"),
+                 ("Arial-BoldItalic", f"{base}/DejaVuSansMono-BoldOblique.ttf")]
     for font_name, font_path in fonts:
         if os.path.exists(font_path) and font_name not in pdfmetrics.getRegisteredFontNames():
             pdfmetrics.registerFont(TTFont(font_name, font_path))
@@ -94,7 +100,7 @@ class NumberedCanvas(canvas.Canvas):
 
         self.setFont("Arial", 7.5)
         self.setFillColor(colors.HexColor("#718096"))
-        disclaimer_short = "Nguồn: Dữ liệu kiểm chứng từ HOSE, VNDirect, Yahoo Finance & BCTC kiểm toán. Báo cáo nhằm mục đích tham khảo đầu tư."
+        disclaimer_short = "Nguồn và thời điểm dữ liệu được ghi tại phần tóm tắt báo cáo. Báo cáo nhằm mục đích tham khảo đầu tư."
         self.drawString(36, 22, disclaimer_short)
 
         page_str = f"Trang {self._pageNumber} / {page_count}"
@@ -307,12 +313,16 @@ def create_investment_report_pdf(
     story.append(Paragraph("1. LUẬN ĐIỂM ĐẦU TƯ THEN CHỐT & CHẤT XÚC TÁC TĂNG TRƯỞNG", h1_style))
     theses = scorecard_analysis.get("strengths", [])[:4]
     if not theses:
-        theses = [
-            f"Vị thế dẫn đầu quy mô ngành với thị phần áp đảo và năng lực cạnh tranh chi phí thấp.",
-            f"Hưởng lợi trực tiếp từ chu kỳ hồi phục kinh tế vĩ mô và làn sóng giải ngân đầu tư công.",
-            f"Cơ cấu tài chính lành mạnh, dòng tiền kinh doanh thặng dư hỗ trợ các dự án mở rộng công suất.",
-            f"Mức định giá hấp dẫn với P/E và P/B đang giao dịch dưới vùng trung bình lịch sử 3 năm."
-        ]
+        theses = [f"{ticker}: chưa có đủ bằng chứng để xác lập luận điểm đầu tư."]
+    from xml.sax.saxutils import escape
+    for key in ["summary", "action_guide", "confirmation", "invalidation"]:
+        if scorecard_analysis.get(key):
+            story.append(Paragraph(escape(scorecard_analysis[key]), body_style))
+    source_note = f"Nguồn giá: {price_df.attrs.get('data_source', 'chưa xác định')}; phiên cuối: {price_df.attrs.get('price_as_of', 'chưa xác định')}. BCTC: {stock_fundamentals.get('data_source', 'chưa xác định')}."
+    story.append(Paragraph(escape(source_note), body_style))
+    story.append(Paragraph(escape(valuation_analysis.get('assumptions', '')), body_style))
+    story.append(Paragraph(escape(valuation_analysis.get('benchmark_source', '')), body_style))
+    story.append(Paragraph(escape(scenario_analysis.get('assumption_notice', '')), body_style))
     for idx, th in enumerate(theses, 1):
         story.append(Paragraph(f"• <b>Luận điểm {idx}:</b> {th}", body_style))
     story.append(Spacer(1, 6))
@@ -628,7 +638,7 @@ def create_investment_report_pdf(
         story.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#CBD5E0"), spaceBefore=4, spaceAfter=4))
         disclaimer_text = (
             "<b>TUYÊN BỐ MIỄN TRỪ TRÁCH NHIỆM (DISCLAIMER):</b> Báo cáo này được xây dựng hoàn toàn dựa trên dữ liệu công khai có nguồn gốc "
-            "kiểm chứng từ Sở Giao dịch Chứng khoán HOSE/HNX, VNDirect API, Yahoo Finance, Tổng cục Thống kê và Báo cáo tài chính kiểm toán của doanh nghiệp. "
+            "từ các nguồn được ghi ở phần tóm tắt; dữ liệu cần được đối chiếu với công bố của doanh nghiệp. Định giá ngành và kịch bản là giả định mô hình. "
             "Các nhận định, định giá và kịch bản đầu tư được tính toán theo mô hình định lượng và không cấu thành lời cam kết lợi nhuận chắc chắn. "
             "Nhà đầu tư cần tự chịu trách nhiệm đối với các quyết định giải ngân và quản trị rủi ro danh mục cá nhân."
         )
@@ -637,3 +647,4 @@ def create_investment_report_pdf(
     # Build PDF với NumberedCanvas
     doc.build(story, canvasmaker=NumberedCanvas)
     return str(output_path)
+

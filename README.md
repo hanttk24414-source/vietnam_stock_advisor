@@ -8,12 +8,13 @@ Bạn có thể tải toàn bộ mã nguồn xuống bằng **Code → Download 
 2. Copy file `.env.example` thành **`.env`** (cùng cấp với `app.py`). Trên PowerShell: `Copy-Item .env.example .env`
 3. Mở `.env` trên máy cá nhân, điền hai dòng `DNSE_API_KEY=...` và `DNSE_API_SECRET=...`. Không gửi hai khóa trong chat, không commit `.env` lên GitHub.
 4. Chạy `python -m streamlit run app.py`, truy cập http://localhost:8501.
-5. Trong sidebar, khi khóa đã được nạp sẽ hiện **Nguồn giá DNSE: đã cấu hình API**. Nhập mã cổ phiếu; bộ tải giá sẽ thử DNSE trước, sau đó VNDirect/Yahoo khi DNSE không khả dụng. Xem dòng **Nguồn giá** để xác nhận dữ liệu đến từ đâu.
+5. Trong sidebar, khi khóa đã được nạp sẽ hiện **Nguồn giá DNSE: đã cấu hình API**. Nhập mã cổ phiếu; bộ tải giá sẽ thử DNSE trước, sau đó Vietcap/VNDirect/Yahoo khi DNSE không khả dụng. Xem dòng **Nguồn giá** để xác nhận dữ liệu đến từ đâu.
 6. Kiểm tra mã cụ thể: `python -m unittest tests.test_dnse_loader -v`.
 
 *DNSE cung cấp nguồn giá OHLCV, không mặc nhiên cung cấp bộ BCTC, vĩ mô hoặc các giả định định giá của hệ thống này. Khi API thất bại, chương trình có thể dùng nguồn khác và phải ghi rõ nguồn. Không tự nhận đã kết nối thành công trước khi kiểm tra máy có khóa hợp lệ và có Internet. Dữ liệu vĩ mô/ngành sẵn có trong code có các giả định chưa kiểm chứng; không dùng đầu ra để ra quyết định đầu tư thực.*
 
 ---
+
 
 
 > **Antigravity Investment Intelligence Platform**  
@@ -30,7 +31,7 @@ Hệ thống cung cấp giải pháp toàn diện từ thu thập dữ liệu, p
 2. **Phân tích Ngành & Cạnh tranh:** Đánh giá chu kỳ ngành, triển vọng, động lực tăng trưởng, rủi ro, ma trận 5 áp lực cạnh tranh của Michael Porter (Porter's Five Forces) và bảng so sánh các doanh nghiệp cùng ngành (Peers).
 3. **Phân tích Kỹ thuật & Định lượng:** Chuỗi giá OHLCV, đường trung bình MA20, MA50, MA200, RSI (14), MACD, Bollinger Bands, ATR, Lợi suất quy năm, Biến động quy năm, Beta so với VN-Index, Sharpe Ratio và Maximum Drawdown.
 4. **Phân tích Cơ bản & Hiệu quả:** BCTC 4 năm, tăng trưởng doanh thu/LNST, mô hình **DuPont 3 nhân tố** ($ROE = \text{Margin} \times \text{Turnover} \times \text{Leverage}$), đòn bẩy D/E và chất lượng dòng tiền ($OCF / LNST$).
-5. **Mô hình Định giá Đa phương pháp:** P/E mục tiêu, P/B mục tiêu, **Chiết khấu Dòng tiền Tự do (DCF FCFF 2-giai đoạn)** với WACC động, và Giá trị mục tiêu tổng hợp (Blended Fair Value).
+5. **Mô hình Định giá Đa phương pháp:** P/E mục tiêu, P/B mục tiêu, **DCF xấp xỉ từ OCF−CapEx (hai giai đoạn)** với WACC động, và Giá trị mục tiêu tổng hợp (Blended Fair Value).
 6. **Điểm Sáng tạo Độc đáo - Quant Multi-Factor Scorecard (100 điểm):** Hệ thống chấm điểm 5 trụ cột (Tăng trưởng, Sinh lời & Chất lượng, Sức khỏe tài chính, Định giá, Kỹ thuật) kèm giải thích chi tiết điểm mạnh/rủi ro.
 7. **Ma trận 3 Kịch bản (Bull / Base / Bear Case):** Phân bổ xác suất, giá mục tiêu từng kịch bản và Tỷ lệ Lợi nhuận / Rủi ro (Risk-Reward Ratio).
 8. **Tự động Xuất Báo cáo PDF Chuyên nghiệp:** Sử dụng ReportLab, font Arial Unicode tiếng Việt không lỗi font, đánh số trang tự động `Trang X / Y`, biểu đồ trực quan độ phân giải cao và tuyên bố miễn trừ trách nhiệm chuẩn mực.
@@ -112,15 +113,27 @@ py cli.py --ticker VCB --wacc 0.09 --g 0.03
 
 ## 📊 4. NGUỒN DỮ LIỆU VÀ CƠ CHẾ KIỂM CHỨNG
 
-Hệ thống tuân thủ nghiêm ngặt nguyên tắc **dữ liệu có thật, kiểm chứng được và không bịa số liệu**:
+Luồng cổ phiếu dùng nguồn trực tuyến và cache riêng theo mã, có ghi nguồn và thời điểm dữ liệu. Mã không tồn tại hoặc nguồn lỗi sẽ báo thiếu dữ liệu, không tự tạo chuỗi giá hoặc lấy BCTC HPG thay thế.
 
-| Nhóm Dữ liệu | Nguồn Khai thác | Trạng thái Kiểm chứng | Cơ chế Dự phòng (Fallback) |
-| :--- | :--- | :--- | :--- |
-| **Giá OHLCV & Volume** | VNDirect Chart API (`dchart-api.vndirect.com.vn`) & Yahoo Finance | Dữ liệu giao dịch khớp lệnh thực tế sàn HOSE/HNX | Cache cục bộ JSON theo mã cổ phiếu |
-| **Chỉ số VN-Index** | VNDirect Chart API | Điểm số và thanh khoản hàng ngày sàn HOSE | Cache chuỗi ngày gần nhất |
-| **Báo cáo Tài chính** | Yahoo Finance API (`.VN`) đối chiếu BCTC kiểm toán | 4 năm tài chính gần nhất (Doanh thu, LNST, Tài sản, Nợ, OCF, FCF) | Bộ dữ liệu chuẩn hóa BCTC kiểm toán trong `stock_loader.py` |
-| **Chỉ số Vĩ mô** | Tổng cục Thống kê (GSO), Ngân hàng Nhà nước (SBV) | GDP, CPI YoY, Lãi suất điều hành, Cung tiền M2, Tín dụng | Dữ liệu công bố chính thức tại `macro_loader.py` |
-| **Tỷ giá & Hàng hóa** | Yahoo Finance (`USDVND=X`, `CL=F`, `GC=F`) | Tỷ giá USD/VND, Dầu thô Brent, Vàng thế giới | Cache thời gian thực |
+| Nhóm dữ liệu | Nguồn / tình trạng | Khi thiếu dữ liệu |
+| --- | --- | --- |
+| Danh sách mã | Vietcap, danh sách tất cả cổ phiếu theo sàn | Cache danh sách hoặc danh mục gợi ý; vẫn cho nhập mã khác |
+| Giá OHLCV | DNSE nếu đã cấu hình → Vietcap → VNDirect → Yahoo Finance | Cache `*_prices_v2.json` cùng mã; không có thì báo lỗi |
+| BCTC | Vietcap → Yahoo Finance; đối chiếu công bố doanh nghiệp trước khi sử dụng | Cache `*_financials_v2.json` có nguồn; không trộn bộ số liệu mẫu |
+| Phân ngành | Thông tin doanh nghiệp từ nguồn tải về | Ngành chưa có mô hình sẽ không mặc định thành ngành thép |
+| So sánh ngành | Benchmark và peers trong `industry_loader.py` là dữ liệu/giả định cố định, chưa cập nhật tự động | Không định giá nếu ngành chưa có benchmark phù hợp |
+| Vĩ mô | Các chỉ tiêu GDP/CPI/lãi suất trong `macro_loader.py` còn là giá trị cấu hình; chưa có bộ thu thập GSO/SBV đầy đủ | Cần cập nhật và đối chiếu riêng |
+
+Vietcap là API công khai không chính thức, có thể thay đổi hoặc giới hạn truy cập. Cấu trúc endpoint được đối chiếu với mã nguồn [vnstock VCI](https://github.com/thinh-vu/vnstock/tree/main/vnstock/explorer/vci). Kiểm thử tự động dùng mock và fixture, không chứng minh API trực tuyến đang hoạt động cho mọi mã.
+
+### Khuyến nghị theo từng cổ phiếu
+
+- Chọn mã từ danh sách toàn thị trường khi tải được, hoặc nhập `MBB`, `VNM`, `TCB`, `FPT.VN`.
+- Nhận xét nêu giá, MA20/MA50, RSI, MACD, thanh khoản, kỳ BCTC, tăng trưởng và định giá của đúng mã đang xem.
+- Điểm cao chưa đủ để mua: cần upside phù hợp, lợi nhuận tăng và xu hướng kỹ thuật; quá mua, xu hướng giảm hoặc giá cũ sẽ hạn chế khuyến nghị.
+- Thiếu BCTC, dòng tiền, số cổ phiếu lưu hành hoặc benchmark ngành: vẫn xem kỹ thuật và dữ liệu đã tải, không chấm tổng điểm/đưa báo cáo đầu tư đầy đủ.
+- Dữ liệu giống nhau có thể cho cùng xếp hạng. Hệ thống không cố tình đổi kết luận chỉ để mỗi mã trông khác nhau.
+- `get_preset_fundamentals()` chỉ phục vụ kiểm thử. Cache cũ `*_fundamentals.json` không được dùng vì có thể chứa dữ liệu dự phòng sai mã.
 
 ---
 
@@ -133,7 +146,7 @@ Trong đó:
 - $\text{Asset Turnover} = \frac{\text{Doanh thu thuần}}{\text{Tổng tài sản}}$
 - $\text{Financial Leverage (Equity Multiplier)} = \frac{\text{Tổng tài sản}}{\text{Vốn chủ sở hữu}}$
 
-### 5.2. Mô hình Chiết khấu Dòng tiền Tự do (DCF 2-Stage FCFF)
+### 5.2. DCF xấp xỉ (cần chuẩn hóa FCFF khi mở rộng)
 - **Chi phí vốn bình quân (WACC):**
   $$WACC = \left(\frac{E}{V}\right) \times K_e + \left(\frac{D}{V}\right) \times K_d \times (1 - t)$$
   Trong đó: $K_e = R_f + \beta \times ERP$; $K_d = 7.5\%$; $t = 20\%$.
@@ -148,7 +161,7 @@ Trong đó:
 Đối với doanh nghiệp sản xuất/thương mại (HPG, FPT, MWG, VHM):
 $$\text{Giá Mục tiêu} = 40\% \times P_{DCF} + 30\% \times P_{P/E} + 30\% \times P_{P/B}$$
 Đối với nhóm Ngân hàng thương mại (VCB):
-$$\text{Giá Mục tiêu} = 50\% \times P_{P/B} + 50\% \times P_{P/E}$$
+$$\text{Giá Mục tiêu} = 55\% \times P_{P/B} + 45\% \times P_{P/E}$$
 
 ### 5.4. Hệ thống Chấm điểm Quant Multi-Factor (100 điểm)
 - **Trụ cột 1: Tăng trưởng (20đ):** Doanh thu YoY, LNST YoY, CAGR 3 năm.
@@ -169,7 +182,7 @@ py -m unittest discover -s tests -p "test_*.py" -v
 - `test_data_loaders`: 100% PASS (Kiểm tra tải dữ liệu vĩ mô, ngành, OHLCV và BCTC).
 - `test_analytics`: 100% PASS (Kiểm tra tính toán công thức kỹ thuật, DuPont, định giá, scorecard và kịch bản).
 - `test_pdf_generation`: 100% PASS (Tạo file PDF thành công, dung lượng chuẩn > 500 KB, phông chữ Unicode toàn vẹn).
-- **Tổng cộng: 12/12 tests PASS trong 24 giây.**
+- Kiểm thử hiện tại: xem `TEST_RESULTS.md`; chạy `python -m unittest discover -s tests -v` (offline, dùng fixture rõ ràng).
 
 ---
 
@@ -182,3 +195,8 @@ py -m unittest discover -s tests -p "test_*.py" -v
 5. **Bước 5:** Tab 3 xem Biểu đồ nến tương tác Plotly, các chỉ báo kỹ thuật, Báo cáo tài chính 4 năm và phân tích DuPont.
 6. **Bước 6:** Tab 4 xem Kết quả định giá DCF, Ma trận 3 kịch bản Bull/Base/Bear và Radar Chart Quant Scorecard.
 7. **Bước 7:** Tab 5 bấm nút **"🚀 BẮT ĐẦU TẠO BÁO CÁO ĐẦU TƯ PDF"** để kết xuất tài liệu PDF 4 trang sắc nét và bấm nút tải về máy tính.
+
+
+DCF không được đưa vào giá tổng hợp nếu dòng tiền tự do âm, thiếu dữ liệu hoặc thuộc nhóm ngân hàng/chứng khoán. Không đổi dòng tiền âm thành dương để tạo giá mục tiêu. Xác suất 25/55/20 và biên kịch bản là giả định minh họa, chưa được backtest.
+
+Với ngành chưa có benchmark, có thể bật **Tự nhập giả định P/E, P/B ngành** ở thanh bên. Các giá trị được ghi rõ là giả định người dùng, không được gán cho dữ liệu ngành thực tế.

@@ -1,27 +1,20 @@
+"""Ticker-specific live data and provenance-aware offline cache.
+Sample financials are available only through get_preset_fundamentals for tests.
 """
-Module thu thập, làm sạch và chuẩn hóa dữ liệu giao dịch và báo cáo tài chính cổ phiếu.
-Nguồn dữ liệu:
-1. VNDirect dchart API: Chuỗi dữ liệu OHLCV lịch sử theo ngày.
-2. Yahoo Finance: Báo cáo tài chính (Income Statement, Balance Sheet, Cash Flow),
-   chỉ số định giá (P/E, P/B, EV/EBITDA, ROE, ROA, Beta).
-3. Local Cache: Cơ chế cache offline đảm bảo tính ổn định và kiểm thử tái lập.
-"""
-
 import json
-import os
+import re
 import time
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, Any, Tuple, Optional
+from datetime import datetime, timedelta
+from typing import Dict, Any
+
+import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
 
 from config import CACHE_DIR, SUPPORTED_TICKERS
+from data import vietcap_provider as vci
 from data.dnse_loader import dnse_configured, fetch_dnse_history
-
-def _demo_mode():
-    return os.getenv('STOCK_ADVISOR_DEMO', '').lower() in {'1', 'true', 'yes'}
 
 def infer_sector_code(info: dict) -> str:
     """Map Yahoo sector/industry labels to one of the locally supported sectors."""
@@ -43,249 +36,184 @@ def infer_sector_code(info: dict) -> str:
         return 'RETAIL'
     return 'GENERAL'
 
+
+
+
+class DataUnavailableError(ValueError):
+    pass
+
+
 def clean_ticker(ticker: str) -> str:
-    """Loại bỏ hậu tố .VN hoặc khoảng trắng nếu có."""
-    return ticker.strip().upper().replace(".VN", "")
+    symbol = ticker.strip().upper()
+    if symbol.endswith('.VN'):
+        symbol = symbol[:-3]
+    if not re.fullmatch(r'[A-Z][A-Z0-9]{2,5}', symbol):
+        raise ValueError('Mã cổ phiếu gồm 3–6 chữ cái/số, ví dụ MBB, VNM hoặc FPT.VN.')
+    return symbol
+
+
+def fetch_stock_list() -> Dict[str, Any]:
+    cache = CACHE_DIR / 'listed_stocks_v2.json'
+    try:
+        result = vci.listings()
+        if result:
+            _write(cache, result)
+            return result
+    except Exception:
+        pass
+    try:
+        return json.loads(cache.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {s: {'name': m['name'], 'exchange': m['exchange']}
+                for s, m in SUPPORTED_TICKERS.items()}
+
+
+def _write(path, data):
+    try:
+        path.write_text(json.dumps(data, ensure_ascii=False, allow_nan=False), encoding='utf-8')
+    except (OSError, ValueError):
+        pass
+
+
+def _normalize_prices(frame, symbol, days, source, cached=False):
+    required = ['open', 'high', 'low', 'close', 'volume']
+    frame = frame[required].apply(pd.to_numeric, errors='coerce').dropna()
+    frame.index = pd.to_datetime(frame.index)
+    if frame.index.tz is not None:
+        frame.index = frame.index.tz_localize(None)
+    frame.index = frame.index.normalize()
+    frame = frame.sort_index().loc[lambda df: ~df.index.duplicated(keep='last')]
+    frame = frame.loc[(frame[['open', 'high', 'low', 'close']] > 0).all(axis=1) & (frame.volume >= 0)]
+    cutoff = pd.Timestamp(datetime.now().date() - timedelta(days=days))
+    frame = frame.loc[(frame.index >= cutoff) & (frame.index <= pd.Timestamp(datetime.now().date()))]
+    if frame.empty:
+        raise DataUnavailableError(f'Không có giá hợp lệ của {symbol} trong khoảng đã chọn.')
+    frame.index.name = 'date'
+    age = (datetime.now().date() - frame.index[-1].date()).days
+    frame.attrs.update(ticker=symbol, data_source=source, cached=cached,
+                       price_as_of=frame.index[-1].strftime('%Y-%m-%d'), stale=age > 7)
+    return frame
+
 
 def fetch_stock_price_history(ticker: str, days: int = 365) -> pd.DataFrame:
-    """
-    Lấy chuỗi dữ liệu lịch sử giá OHLCV của cổ phiếu.
-    Ưu tiên 1: VNDirect Chart API (Dữ liệu khớp lệnh chính thống sàn HOSE/HNX)
-    Ưu tiên 2: Yahoo Finance ({ticker}.VN)
-    Ưu tiên 3: Local cache JSON
-    """
-    sym = clean_ticker(ticker)
-    
-    # 0. DNSE là nguồn giá ưu tiên khi người dùng cấu hình API Key/Secret.
+    symbol = clean_ticker(ticker)
+    cache = CACHE_DIR / f'{symbol}_prices_v2.json'
+    errors = []
+    def finish(frame, source):
+        frame = _normalize_prices(frame, symbol, days, source)
+        _write(cache, {'ticker': symbol, 'source': source,
+                      'rows': json.loads(frame.reset_index().to_json(orient='records', date_format='iso'))})
+        return frame
     if dnse_configured():
         try:
-            return fetch_dnse_history(sym, days)
+            return finish(fetch_dnse_history(symbol, days), 'DNSE OpenAPI')
         except Exception as exc:
-            print(f"[Warning] DNSE không trả dữ liệu cho {sym}: {exc}. Thử VNDirect/Yahoo.")
-
-    # 1. Thử VNDirect API
-    to_time = int(time.time())
-    from_time = to_time - int(days * 86400 * 1.5)
-    url = f"https://dchart-api.vndirect.com.vn/dchart/history?resolution=D&symbol={sym}&from={from_time}&to={to_time}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    
+            errors.append(str(exc))
     try:
-        resp = requests.get(url, headers=headers, timeout=7)
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("s") == "ok" and "t" in data and len(data["t"]) > 0:
-                # VNDirect trả về giá nghìn đồng (ví dụ 20.5 cho 20,500đ), nhân 1,000 cho chuẩn VNĐ
-                prices_factor = 1000.0 if max(data["c"]) < 1000 else 1.0
-                df = pd.DataFrame({
-                    "date": [datetime.fromtimestamp(ts) for ts in data["t"]],
-                    "open": [float(x) * prices_factor for x in data["o"]],
-                    "high": [float(x) * prices_factor for x in data["h"]],
-                    "low": [float(x) * prices_factor for x in data["l"]],
-                    "close": [float(x) * prices_factor for x in data["c"]],
-                    "volume": [float(x) for x in data["v"]]
-                })
-                df.set_index("date", inplace=True)
-                df.sort_index(inplace=True)
-                if not df.empty:
-                    return df.tail(days)
-    except Exception as e:
-        print(f"[Notice] VNDirect API không khả dụng cho {sym}: {e}. Chuyển sang Yahoo Finance.")
-
-    # 2. Thử Yahoo Finance
+        return finish(vci.history(symbol, days), 'Vietcap')
+    except Exception as exc:
+        errors.append(str(exc))
     try:
-        yf_sym = f"{sym}.VN"
-        yf_stock = yf.Ticker(yf_sym)
-        # Chuyển số ngày sang period yfinance
-        period_str = "1y" if days <= 365 else ("3y" if days <= 1095 else "5y")
-        hist = yf_stock.history(period=period_str)
-        if not hist.empty:
-            df = pd.DataFrame({
-                "open": hist["Open"].values,
-                "high": hist["High"].values,
-                "low": hist["Low"].values,
-                "close": hist["Close"].values,
-                "volume": hist["Volume"].values
-            }, index=pd.to_datetime(hist.index.date))
-            df.index.name = "date"
-            df.sort_index(inplace=True)
-            return df.tail(days)
-    except Exception as e:
-        print(f"[Notice] Yahoo Finance không khả dụng cho {sym}: {e}. Đang kiểm tra cache.")
+        now = int(time.time())
+        response = requests.get('https://dchart-api.vndirect.com.vn/dchart/history',
+            params={'resolution': 'D', 'symbol': symbol, 'from': now-days*86400, 'to': now},
+            headers={'User-Agent': 'Mozilla/5.0'}, timeout=7)
+        response.raise_for_status()
+        raw = response.json()
+        if raw.get('s') == 'ok' and raw.get('t'):
+            frame = pd.DataFrame({k: raw[v] for k,v in
+                [('open','o'),('high','h'),('low','l'),('close','c'),('volume','v')]},
+                index=pd.to_datetime(raw['t'], unit='s'))
+            frame[['open','high','low','close']] *= 1000.0
+            return finish(frame, 'VNDirect')
+    except Exception as exc:
+        errors.append(str(exc))
+    try:
+        frame = yf.Ticker(f'{symbol}.VN').history(
+            start=(datetime.now()-timedelta(days=days)).strftime('%Y-%m-%d'), auto_adjust=False)
+        frame = frame.rename(columns=str.lower)
+        return finish(frame, 'Yahoo Finance')
+    except Exception as exc:
+        errors.append(str(exc))
+    try:
+        raw = json.loads(cache.read_text(encoding='utf-8'))
+        if raw.get('ticker') == symbol:
+            frame = pd.DataFrame(raw['rows']).set_index('date')
+            return _normalize_prices(frame, symbol, days, raw['source'], cached=True)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    raise DataUnavailableError(f'Không tải được giá của {symbol}. Kiểm tra mã, kết nối hoặc thử lại nguồn dữ liệu; không tạo giá mô phỏng.')
 
-    # 3. Thử nạp từ Cache
-    cache_file = CACHE_DIR / f"{sym}_history.json"
-    if _demo_mode() and cache_file.exists():
-        try:
-            with open(cache_file, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-                df = pd.DataFrame(raw)
-                df["date"] = pd.to_datetime(df["date"])
-                df.set_index("date", inplace=True)
-                return df.tail(days)
-        except Exception:
-            pass
 
-    if not _demo_mode():
-        raise RuntimeError(f'Không tải được giá thật của {sym}; không sử dụng dữ liệu giả lập.')
+def _yahoo_fundamentals(symbol):
+    stock = yf.Ticker(f'{symbol}.VN')
+    info = stock.info or {}
+    if not info.get('regularMarketPrice') and not info.get('currentPrice'):
+        return {}
+    result = {'ticker': symbol, 'name': info.get('longName') or info.get('shortName') or symbol,
+              'sector': info.get('industry') or info.get('sector') or 'Chưa xác định',
+              'exchange': info.get('exchange') or 'Chưa xác định',
+              'description': info.get('longBusinessSummary') or '',
+              'shares_outstanding': info.get('sharesOutstanding') or 0,
+              'financial_history': [], 'data_source': 'Yahoo Finance',
+              'last_updated': datetime.now().isoformat(timespec='seconds')}
+    result['sector_code'] = infer_sector_code(info)
+    result['dividend_yield'] = (info.get('dividendYield') or 0) * 100
+    fin, balance, cashflow = stock.financials, stock.balance_sheet, stock.cashflow
+    fields = {'revenue': (fin, 'Total Revenue'), 'gross_profit': (fin, 'Gross Profit'),
+              'ebit': (fin, 'Operating Income'), 'net_income': (fin, 'Net Income'),
+              'total_assets': (balance, 'Total Assets'), 'equity': (balance, 'Stockholders Equity'),
+              'debt': (balance, 'Total Debt'), 'cash': (balance, 'Cash And Cash Equivalents'),
+              'ocf': (cashflow, 'Operating Cash Flow'), 'capex': (cashflow, 'Capital Expenditure')}
+    if fin is not None and not fin.empty:
+        for column in sorted(fin.columns)[-4:]:
+            row = {'year': str(column.year)}
+            for field, (frame, label) in fields.items():
+                if frame is not None and label in frame.index and column in frame.columns:
+                    value = float(frame.loc[label, column])
+                    if np.isfinite(value):
+                        row[field] = (abs(value) if field == 'capex' else value) / 1e9
+            if 'ocf' in row and 'capex' in row:
+                row['fcf'] = row['ocf'] - row['capex']
+            result['financial_history'].append(row)
+    return result
 
-    # 4. Fallback mô phỏng nếu tất cả các nguồn trực tuyến bị gián đoạn
-    dates = pd.date_range(end=datetime.now(), periods=days, freq="B")
-    base_price = 25000.0 if sym not in SUPPORTED_TICKERS else 35000.0
-    import numpy as np
-    np.random.seed(abs(hash(sym)) % 10000)
-    ret = np.random.normal(0.0006, 0.015, size=len(dates))
-    prices = base_price * np.cumprod(1 + ret)
-    df = pd.DataFrame({
-        "open": prices * 0.995,
-        "high": prices * 1.012,
-        "low": prices * 0.988,
-        "close": prices,
-        "volume": np.random.randint(5_000_000, 25_000_000, size=len(dates))
-    }, index=dates)
-    return df
 
 def fetch_stock_fundamentals(ticker: str) -> Dict[str, Any]:
-    """
-    Lấy thông tin tài chính toàn diện của doanh nghiệp niêm yết:
-    - Báo cáo kết quả kinh doanh 4 năm
-    - Bảng cân đối kế toán 4 năm
-    - Lưu chuyển tiền tệ & Dòng tiền tự do FCF
-    - Các chỉ số định giá P/E, P/B, ROE, ROA, Nợ/Vốn CSH
-    """
-    sym = clean_ticker(ticker)
-    cache_file = CACHE_DIR / f"{sym}_fundamentals.json"
-    
-    # Chuẩn bị dữ liệu mặc định chuẩn cho các mã chính trường hợp offline
-    company_meta = SUPPORTED_TICKERS.get(sym, {
-        "name": f"CTCP {sym}",
-        "exchange": "HOSE",
-        "sector": "Tổng hợp",
-        "sector_code": "GENERAL",
-        "yf_ticker": f"{sym}.VN",
-        "shares_outstanding": 1_000_000_000,
-        "description": f"Doanh nghiệp niêm yết trên sàn chứng khoán Việt Nam ({sym})"
-    })
-
-    fundamentals: Dict[str, Any] = {
-        "ticker": sym,
-        "name": company_meta["name"],
-        "sector": company_meta["sector"],
-        "sector_code": company_meta.get("sector_code", "GENERAL"),
-        "exchange": company_meta["exchange"],
-        "shares_outstanding": company_meta["shares_outstanding"],
-        "description": company_meta["description"],
-        "last_updated": datetime.now().strftime("%Y-%m-%d")
-    }
-
-    fetched_live = False
-    
-    # 1. Thử kết nối Yahoo Finance
+    symbol = clean_ticker(ticker)
+    cache = CACHE_DIR / f'{symbol}_financials_v2.json'
+    partial = {}
+    for provider in [vci.fundamentals, _yahoo_fundamentals]:
+        try:
+            result = provider(symbol)
+            if result and result.get('ticker') == symbol:
+                if not partial:
+                    partial = result
+                required = {'revenue', 'net_income', 'total_assets', 'equity'}
+                if len(result.get('financial_history', [])) >= 2 and all(
+                        required <= row.keys() for row in result['financial_history'][-2:]):
+                    _write(cache, result)
+                    return result
+        except Exception:
+            continue
     try:
-        yf_sym = f"{sym}.VN"
-        stock = yf.Ticker(yf_sym)
-        info = stock.info
-        if info and len(info) > 10 and info.get("regularMarketPrice") is not None:
-            fundamentals["current_price"] = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0.0)
-            if sym not in SUPPORTED_TICKERS:
-                fundamentals['name'] = info.get('longName') or info.get('shortName') or sym
-                fundamentals['exchange'] = info.get('exchange') or 'Chưa xác định'
-                fundamentals['sector'] = info.get('sector') or 'Chưa phân loại ngành'
-                fundamentals['shares_outstanding'] = int(info.get('sharesOutstanding') or 0)
-                fundamentals['sector_code'] = infer_sector_code(info)
-            fundamentals["pe"] = round(float(info.get("trailingPE", 0.0) or 0.0), 2)
-            fundamentals["forward_pe"] = round(float(info.get("forwardPE", 0.0) or 0.0), 2)
-            fundamentals["pb"] = round(float(info.get("priceToBook", 0.0) or 0.0), 2)
-            fundamentals["market_cap_bil"] = round(float(info.get("marketCap", 0.0)) / 1e9, 1)
-            fundamentals["beta"] = round(float(info.get("beta", 1.0) or 1.0), 2)
-            raw_div = float(info.get("dividendYield", 0.0) or 0.0)
-            if raw_div > 1.0:
-                fundamentals["dividend_yield"] = round(raw_div, 2)
-            else:
-                fundamentals["dividend_yield"] = round(raw_div * 100, 2)
-            fundamentals["roe"] = round(float(info.get("returnOnEquity", 0.0) or 0.0) * 100, 2)
-            fundamentals["roa"] = round(float(info.get("returnOnAssets", 0.0) or 0.0) * 100, 2)
-            fundamentals["gross_margin"] = round(float(info.get("grossMargins", 0.0) or 0.0) * 100, 2)
-            fundamentals["net_margin"] = round(float(info.get("profitMargins", 0.0) or 0.0) * 100, 2)
-            fundamentals["rev_growth_yoy"] = round(float(info.get("revenueGrowth", 0.0) or 0.0) * 100, 2)
-            fundamentals["earnings_growth_yoy"] = round(float(info.get("earningsGrowth", 0.0) or 0.0) * 100, 2)
-            fundamentals["debt_to_equity"] = round(float(info.get("debtToEquity", 0.0) or 0.0) / 100, 2)
-            fundamentals["current_ratio"] = round(float(info.get("currentRatio", 1.2) or 1.2), 2)
-            fundamentals["quick_ratio"] = round(float(info.get("quickRatio", 0.9) or 0.9), 2)
-            
-            # Lấy chuỗi báo cáo tài chính hàng năm
-            fin = stock.financials
-            bs = stock.balance_sheet
-            cf = stock.cashflow
-            
-            yearly_data = []
-            if fin is not None and not fin.empty and len(fin.columns) >= 3:
-                cols = list(fin.columns)[:4]
-                cols.reverse() # sắp xếp từ cũ đến mới
-                for col in cols:
-                    year_label = col.strftime("%Y") if hasattr(col, "strftime") else str(col)[:4]
-                    rev = float(fin.loc["Total Revenue", col]) / 1e9 if "Total Revenue" in fin.index else 0.0
-                    gp = float(fin.loc["Gross Profit", col]) / 1e9 if "Gross Profit" in fin.index else 0.0
-                    ebit = float(fin.loc["Operating Income", col]) / 1e9 if "Operating Income" in fin.index else 0.0
-                    ni = float(fin.loc["Net Income", col]) / 1e9 if "Net Income" in fin.index else 0.0
-                    
-                    # Cân đối kế toán
-                    assets = float(bs.loc["Total Assets", col]) / 1e9 if bs is not None and "Total Assets" in bs.index and col in bs.columns else 0.0
-                    equity = float(bs.loc["Stockholders Equity", col]) / 1e9 if bs is not None and "Stockholders Equity" in bs.index and col in bs.columns else 0.0
-                    debt = float(bs.loc["Total Debt", col]) / 1e9 if bs is not None and "Total Debt" in bs.index and col in bs.columns else 0.0
-                    cash = float(bs.loc["Cash And Cash Equivalents", col]) / 1e9 if bs is not None and "Cash And Cash Equivalents" in bs.index and col in bs.columns else 0.0
-                    
-                    # Dòng tiền
-                    ocf = float(cf.loc["Operating Cash Flow", col]) / 1e9 if cf is not None and "Operating Cash Flow" in cf.index and col in cf.columns else 0.0
-                    capex = abs(float(cf.loc["Capital Expenditure", col]) / 1e9) if cf is not None and "Capital Expenditure" in cf.index and col in cf.columns else (rev * 0.08)
-                    fcf = ocf - capex
-                    
-                    yearly_data.append({
-                        "year": year_label,
-                        "revenue": round(rev, 1),
-                        "gross_profit": round(gp, 1),
-                        "ebit": round(ebit, 1),
-                        "net_income": round(ni, 1),
-                        "total_assets": round(assets, 1),
-                        "equity": round(equity, 1),
-                        "debt": round(debt, 1),
-                        "cash": round(cash, 1),
-                        "ocf": round(ocf, 1),
-                        "capex": round(capex, 1),
-                        "fcf": round(fcf, 1)
-                    })
-                fundamentals["financial_history"] = yearly_data
-                fetched_live = True
-    except Exception as e:
-        print(f"[Notice] Lỗi khi kéo BCTC qua yfinance cho {sym}: {e}")
+        cached = json.loads(cache.read_text(encoding='utf-8'))
+        if cached.get('ticker') == symbol and cached.get('data_source') in ['Vietcap', 'Yahoo Finance']:
+            cached['cached'] = True
+            cached['data_warning'] = 'BCTC từ cache; thời điểm tải: ' + cached.get('last_updated', 'chưa rõ')
+            return cached
+    except (OSError, ValueError):
+        pass
+    return partial or {'ticker': symbol, 'name': symbol, 'sector': 'Chưa xác định',
+                       'sector_code': 'GENERAL', 'exchange': 'Chưa xác định',
+                       'description': '', 'shares_outstanding': 0, 'financial_history': [],
+                       'data_source': 'Không có BCTC', 'data_warning': 'Chưa có BCTC của mã này.'}
 
-    # Nếu không lấy được hoặc thiếu, sử dụng dữ liệu chuẩn hoá kiểm chứng được từ BCTC các năm của doanh nghiệp
-    if not fetched_live or "financial_history" not in fundamentals or len(fundamentals.get("financial_history", [])) < 3:
-        if not _demo_mode() or sym not in SUPPORTED_TICKERS:
-            raise RuntimeError(f'Không có báo cáo tài chính đầy đủ cho {sym}. Không thể định giá đáng tin cậy; không sử dụng dữ liệu HPG thay thế.')
-        # Chỉ sử dụng bộ dữ liệu mẫu khi cố ý bật DEMO.
-        preset_data = get_preset_fundamentals(sym)
-        for k, v in preset_data.items():
-            if k not in fundamentals or fundamentals[k] == 0.0 or fundamentals[k] is None:
-                fundamentals[k] = v
-        if "financial_history" not in fundamentals:
-            fundamentals["financial_history"] = preset_data.get("financial_history", [])
-
-    fundamentals['data_mode'] = 'LIVE' if fetched_live else 'DEMO'
-    fundamentals['data_source'] = 'Yahoo Finance' if fetched_live else 'MẪU DEMO CHƯA XÁC MINH'
-
-    # Lưu cache
-    try:
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(fundamentals, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[Notice] Lưu cache cho {sym} thất bại: {e}")
-
-    return fundamentals
 
 def get_preset_fundamentals(sym: str) -> Dict[str, Any]:
     """
-    Cung cấp số liệu tài chính kiểm chứng được từ Báo cáo tài chính kiểm toán
-    giai đoạn 2022 - 2025 phục vụ fallback hoặc kiểm thử offline.
+    Dữ liệu mẫu cố định dành riêng cho kiểm thử; không xác nhận là BCTC kiểm toán.
+    Luồng phân tích thực không gọi hàm này.
     """
     presets = {
         "HPG": {
@@ -439,4 +367,18 @@ def get_preset_fundamentals(sym: str) -> Dict[str, Any]:
             ]
         }
     }
-    return presets.get(sym, presets["HPG"])
+    return presets.get(clean_ticker(sym), {})
+
+
+def sync_market_price(fundamentals, prices):
+    """Use the chart's last close consistently across valuation and recommendations."""
+    fundamentals['current_price'] = float(prices['close'].iloc[-1])
+    fundamentals['price_as_of'] = prices.attrs.get('price_as_of')
+    fundamentals.setdefault('dividend_yield', 0.0)
+    rows = fundamentals.get('financial_history', [])
+    shares = fundamentals.get('shares_outstanding', 0)
+    if rows and shares > 0:
+        ni, equity = rows[-1].get('net_income', 0), rows[-1].get('equity', 0)
+        fundamentals['pe'] = fundamentals['current_price'] * shares / (ni*1e9) if ni > 0 else 0.0
+        fundamentals['pb'] = fundamentals['current_price'] * shares / (equity*1e9) if equity > 0 else 0.0
+    return fundamentals

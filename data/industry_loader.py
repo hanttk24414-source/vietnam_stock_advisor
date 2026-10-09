@@ -197,14 +197,15 @@ def get_industry_analysis(sector_code: str) -> Dict[str, Any]:
     Truy xuất báo cáo phân tích ngành, ma trận cạnh tranh và dữ liệu peers.
     """
     return INDUSTRY_DATABASE.get(sector_code, {
-        "name": "Chưa phân loại ngành", "cycle_stage": "Chưa có dữ liệu",
-        "outlook": "Chưa có dữ liệu ngành đáng tin cậy",
+        "name": "Chưa có mô hình so sánh ngành này", "cycle_stage": "Chưa xác định",
+        "outlook": "Cần bổ sung dữ liệu doanh nghiệp cùng ngành",
         "benchmark_pe": 0.0, "benchmark_pb": 0.0, "benchmark_roe": 0.0,
-        "drivers": [], "risks": [], "porter_forces": {}, "peers": [],
-    })
+        "drivers": [], "risks": ["Chưa có dữ liệu so sánh ngành"],
+        "porter_forces": {}, "peers": []})
 
 def get_all_industries() -> Dict[str, Dict[str, Any]]:
     """
     Trả về toàn bộ cơ sở dữ liệu các ngành đã chuẩn hóa.
     """
     return INDUSTRY_DATABASE
+

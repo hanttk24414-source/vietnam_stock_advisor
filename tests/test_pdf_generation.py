@@ -6,7 +6,7 @@ import os
 import unittest
 from pathlib import Path
 from data.macro_loader import fetch_macro_indicators, fetch_vnindex_history
-from data.stock_loader import fetch_stock_price_history, fetch_stock_fundamentals
+from tests.fixtures import stock_fixture, prices_fixture, macro_fixture
 from analytics.macro_engine import analyze_macro_environment
 from analytics.industry_engine import evaluate_industry_and_peers
 from analytics.technical_engine import compute_technical_indicators
@@ -19,12 +19,12 @@ class TestPDFGeneration(unittest.TestCase):
 
     def test_pdf_generation_flow(self):
         sym = "HPG"
-        macro_raw = fetch_macro_indicators()
-        vn_df = fetch_vnindex_history(120)
+        macro_raw = macro_fixture()
+        vn_df = prices_fixture(120)
         macro_res = analyze_macro_environment(macro_raw)
         
-        price_df = fetch_stock_price_history(sym, 120)
-        stock_raw = fetch_stock_fundamentals(sym)
+        price_df = prices_fixture(120)
+        stock_raw = stock_fixture(sym)
         tech_res = compute_technical_indicators(price_df, vn_df)
         fund_res = analyze_fundamentals(stock_raw)
         ind_res = evaluate_industry_and_peers("STEEL", stock_raw)
@@ -56,3 +56,4 @@ class TestPDFGeneration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

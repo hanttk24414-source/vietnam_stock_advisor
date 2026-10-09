@@ -54,6 +54,8 @@ def compute_technical_indicators(df: pd.DataFrame, vnindex_df: Optional[pd.DataF
     avg_loss = loss.rolling(window=14, min_periods=14).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     rsi_series = 100 - (100 / (1 + rs))
+    rsi_series = rsi_series.mask((avg_loss == 0) & (avg_gain > 0), 100.0)
+    rsi_series = rsi_series.mask((avg_loss == 0) & (avg_gain == 0), 50.0)
     rsi = float(rsi_series.dropna().iloc[-1]) if not rsi_series.dropna().empty else 50.0
 
     # 3. MACD (12, 26, 9)
@@ -187,6 +189,7 @@ def compute_technical_indicators(df: pd.DataFrame, vnindex_df: Optional[pd.DataF
     resist_2 = round(high_52w, 0)
 
     return {
+        "observation_count": len(df),
         "current_price": current_price,
         "change_1d_pct": round(chg_1d, 2),
         "change_1w_pct": round(chg_1w, 2),
@@ -223,3 +226,4 @@ def compute_technical_indicators(df: pd.DataFrame, vnindex_df: Optional[pd.DataF
         "resistance_levels": [resist_1, resist_2],
         "reasons": reasons
     }
+

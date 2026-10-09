@@ -26,12 +26,15 @@ def evaluate_industry_and_peers(sector_code: str, stock_fundamentals: Dict[str, 
     bench_roe = industry_info.get("benchmark_roe", 15.0)
     
     # 1. So sánh với chuẩn ngành
-    pe_discount = round(((bench_pe - stock_pe) / bench_pe) * 100, 1) if bench_pe > 0 else 0.0
-    pb_discount = round(((bench_pb - stock_pb) / bench_pb) * 100, 1) if bench_pb > 0 else 0.0
+    pe_discount = round(((bench_pe - stock_pe) / bench_pe) * 100, 1) if bench_pe > 0 and stock_pe > 0 else 0.0
+    pb_discount = round(((bench_pb - stock_pb) / bench_pb) * 100, 1) if bench_pb > 0 and stock_pb > 0 else 0.0
     roe_premium = round(stock_roe - bench_roe, 1)
     
     # 2. Đánh giá vị thế cạnh tranh
-    if stock_roe > bench_roe and stock_pe < bench_pe:
+    if bench_pe <= 0 or stock_pe <= 0:
+        competitive_moat = "CHƯA ĐỦ DỮ LIỆU SO SÁNH NGÀNH"
+        moat_score = 0
+    elif stock_roe > bench_roe and stock_pe < bench_pe:
         competitive_moat = "CON HÀO KINH TẾ RỘNG (WIDE MOAT) - HIỆU QUẢ CAO KÈM ĐỊNH GIÁ CHIẾT KHẤU"
         moat_score = 90
     elif stock_roe > bench_roe:
@@ -49,6 +52,7 @@ def evaluate_industry_and_peers(sector_code: str, stock_fundamentals: Dict[str, 
     
     return {
         "sector_name": industry_info.get("name"),
+        "benchmark_source": "Giả định tham chiếu trong cấu hình; chưa phải dữ liệu ngành thời gian thực",
         "cycle_stage": industry_info.get("cycle_stage"),
         "outlook": industry_info.get("outlook"),
         "benchmark_pe": bench_pe,
@@ -64,3 +68,4 @@ def evaluate_industry_and_peers(sector_code: str, stock_fundamentals: Dict[str, 
         "porter_forces": industry_info.get("porter_forces", {}),
         "peers": peers_list
     }
+

@@ -9,17 +9,26 @@ Bao gồm:
 
 from typing import Dict, Any, List
 from config import RATING_SCALE, SCORECARD_WEIGHTS
+from analytics.recommendation_engine import build_recommendation
 
 def calculate_quant_scorecard(
     fundamental_analysis: Dict[str, Any],
     technical_analysis: Dict[str, Any],
     valuation_analysis: Dict[str, Any],
     industry_analysis: Dict[str, Any],
-    macro_analysis: Dict[str, Any]
+    macro_analysis: Dict[str, Any],
+    ticker: str = "",
+    price_status: Dict[str, Any] = None
 ) -> Dict[str, Any]:
     """
     Tính toán bảng điểm định lượng toàn diện 100 điểm với giải thích chi tiết.
     """
+    ticker = ticker or fundamental_analysis.get("ticker", "Cổ phiếu")
+    if not fundamental_analysis.get("available", True) or fundamental_analysis.get("missing_fields"):
+        result = build_recommendation(ticker, technical_analysis, fundamental_analysis,
+                                      valuation_analysis, price_status=price_status)
+        result.update(total_score=None, pillars={}, strengths=result["evidence"])
+        return result
     strengths: List[str] = []
     risks: List[str] = []
 
@@ -31,7 +40,7 @@ def calculate_quant_scorecard(
 
     if rev_growth >= 25.0:
         growth_score += 8.0
-        strengths.append(f"Doanh thu tăng trưởng vượt bậc +{rev_growth:.1f}% YoY phản ánh mở rộng thị phần mạnh mẽ.")
+        strengths.append(f"Doanh thu tăng trưởng vượt bậc +{rev_growth:.1f}% YoY so với kỳ báo cáo trước.")
     elif rev_growth >= 12.0:
         growth_score += 6.0
         strengths.append(f"Doanh thu tăng trưởng ổn định +{rev_growth:.1f}% YoY.")
@@ -68,7 +77,7 @@ def calculate_quant_scorecard(
 
     if roe >= 20.0:
         quality_score += 8.0
-        strengths.append(f"Tỷ suất ROE đạt {roe:.1f}%, thuộc top dẫn đầu hiệu quả sinh lời toàn ngành.")
+        strengths.append(f"Tỷ suất ROE đạt {roe:.1f}%, theo BCTC của doanh nghiệp.")
     elif roe >= 15.0:
         quality_score += 6.5
         strengths.append(f"Tỷ suất ROE đạt {roe:.1f}%, vượt trội so với lãi suất tiền gửi.")
@@ -86,7 +95,7 @@ def calculate_quant_scorecard(
 
     if net_margin >= 15.0:
         quality_score += 5.0
-        strengths.append(f"Biên lợi nhuận ròng cao ({net_margin:.1f}%) thể hiện sức mạnh định giá sản phẩm.")
+        strengths.append(f"Biên lợi nhuận ròng cao ({net_margin:.1f}%) theo BCTC kỳ gần nhất.")
     elif net_margin >= 8.0:
         quality_score += 4.0
     else:
@@ -107,10 +116,10 @@ def calculate_quant_scorecard(
     
     if dte <= 0.6:
         fin_health_score += 10.0
-        strengths.append(f"Đòn bẩy tài chính rất thấp (D/E: {dte:.2f}x), rủi ro thanh khoản tối thiểu.")
+        strengths.append(f"Đòn bẩy tài chính rất thấp (D/E: {dte:.2f}x), cần đối chiếu với cơ cấu kỳ hạn nợ.")
     elif dte <= 1.0:
         fin_health_score += 8.0
-        strengths.append(f"Tỷ lệ nợ trên vốn chủ D/E đạt {dte:.2f}x ở mức an toàn vững chắc.")
+        strengths.append(f"Tỷ lệ nợ trên vốn chủ D/E đạt {dte:.2f}x theo BCTC kỳ gần nhất.")
     elif dte <= 1.8:
         fin_health_score += 5.0
     else:
@@ -173,33 +182,6 @@ def calculate_quant_scorecard(
             action_guide = item["action"]
             break
 
-    # Hướng dẫn hành động theo bằng chứng của từng mã; không lặp câu chung.
-    upside = valuation_analysis.get("blended_upside", 0.0)
-    rsi = technical_analysis.get("rsi")
-    trend = technical_analysis.get("overall_signal", "CHƯA RÕ")
-    roe_value = fundamental_analysis.get("roe")
-    debt_ratio = fundamental_analysis.get("debt_to_equity")
-    symbol = fundamental_analysis.get("ticker") or valuation_analysis.get("ticker") or "cổ phiếu"
-    evidence = [f"giá mục tiêu chênh thị giá {upside:+.1f}%"]
-    if rsi is not None:
-        evidence.append(f"RSI {rsi:.1f}")
-    if roe_value is not None:
-        evidence.append(f"ROE {roe_value:.1f}%")
-    if debt_ratio is not None:
-        evidence.append(f"D/E {debt_ratio:.2f} lần")
-    evidence.append(f"tín hiệu kỹ thuật: {trend}")
-    detail = "; ".join(evidence)
-    if upside <= -10:
-        action_guide = f"Ưu tiên tránh mua mới/đánh giá lại định giá ({detail})."
-    elif trend == "TIÊU CỰC (BEARISH)":
-        action_guide = f"Chờ giá vượt MA20/MA50 và thanh khoản cải thiện; không mua đuổi ({detail})."
-    elif upside >= 20 and total_score >= 65:
-        action_guide = f"Có thể xem xét giải ngân từng phần sau khi xác nhận giá và khối lượng ({detail})."
-    elif upside >= 5:
-        action_guide = f"Đưa vào danh sách theo dõi, ưu tiên vùng hỗ trợ và mức định giá hợp lý ({detail})."
-    else:
-        action_guide = f"Chưa có biên an toàn rõ ràng; chờ thêm tín hiệu và cập nhật BCTC ({detail})."
-
     pillars = {
         "growth": {"score": round(growth_score, 1), "max": 20, "label": "Tăng trưởng"},
         "profitability": {"score": round(quality_score, 1), "max": 25, "label": "Khả năng sinh lời & Chất lượng"},
@@ -208,13 +190,18 @@ def calculate_quant_scorecard(
         "technical": {"score": tech_pillar_score, "max": 15, "label": "Động lượng kỹ thuật"}
     }
 
+    recommendation = build_recommendation(ticker, technical_analysis, fundamental_analysis,
+                                          valuation_analysis, total_score, price_status)
+    rating_title = recommendation["rating"]
+    action_guide = recommendation["action_guide"]
     return {
+        **recommendation,
         "total_score": total_score,
         "rating": rating_title,
         "action_guide": action_guide,
         "pillars": pillars,
         "strengths": strengths,
-        "risks": risks
+        "risks": list(dict.fromkeys(risks + recommendation["risks"]))
     }
 
 def build_scenario_matrix(
@@ -226,6 +213,9 @@ def build_scenario_matrix(
     """
     Xây dựng ma trận 3 kịch bản đầu tư (Bull / Base / Bear Case) kèm xác suất và tỷ lệ Lợi nhuận / Rủi ro.
     """
+    if current_price <= 0 or blended_target <= 0:
+        raise ValueError("Kịch bản cần giá và giá mục tiêu dương.")
+    ticker = fundamental_analysis.get("ticker", "Cổ phiếu")
     # 1. Kịch bản Cơ sở (Base Case - 55% xác suất): Đạt giá trị định giá tổng hợp
     base_target = blended_target
     base_upside = round(((base_target - current_price) / current_price) * 100, 1)
@@ -236,7 +226,7 @@ def build_scenario_matrix(
 
     # 3. Kịch bản Thận trọng (Bear Case - 20% xác suất): Rủi ro vĩ mô/ngành phát sinh, kiểm tra lại đáy kỹ thuật
     support_2 = technical_analysis.get("support_levels", [current_price * 0.9, current_price * 0.85])[1]
-    bear_target = round(min(support_2, current_price * 0.85), 0)
+    bear_target = round(min(support_2, current_price * 0.85, blended_target * 0.85), 0)
     bear_downside = round(((bear_target - current_price) / current_price) * 100, 1)
 
     # Giá trị kỳ vọng theo xác suất (Probability-Weighted Fair Value)
@@ -252,28 +242,31 @@ def build_scenario_matrix(
     risk_reward_ratio = round(potential_gain / potential_loss, 2)
 
     # Ngưỡng Dừng lỗ Bảo toàn vốn (Stop-loss level: vi phạm MA50 hoặc giảm 7-8% từ giá mua)
-    stop_loss_price = round(current_price * 0.925, 0)
-    buy_zone = f"{round(current_price * 0.98, 0):,.0f} - {round(current_price * 1.02, 0):,.0f} VNĐ"
+    stop_loss_price = round(min(current_price * 0.925, bear_target), 0)
+    supports = [x for x in technical_analysis.get("support_levels", []) if 0 < x < current_price]
+    support = max(supports) if supports else current_price * 0.95
+    buy_zone = f"Vùng hỗ trợ tham chiếu {support:,.0f} VNĐ; chỉ cân nhắc mua nếu khuyến nghị và điều kiện xác nhận phù hợp"
 
     return {
+        "assumption_notice": "Biên kịch bản và xác suất 25/55/20 là giả định minh họa, chưa được hiệu chỉnh bằng backtest.",
         "current_price": current_price,
         "bull_case": {
             "target_price": bull_target,
             "upside_pct": bull_upside,
             "probability": prob_bull,
-            "assumptions": "KQKD vượt 15-20% kế hoạch năm, dự án trọng điểm đi vào khai thác sớm hơn dự kiến, dòng tiền ngoại mua ròng mạnh."
+            "assumptions": f"{ticker}: giả định giá mục tiêu cơ sở tăng 18%; cần lợi nhuận cải thiện và giá vượt kháng cự {technical_analysis.get('resistance_levels', [current_price])[0]:,.0f} đ."
         },
         "base_case": {
             "target_price": base_target,
             "upside_pct": base_upside,
             "probability": prob_base,
-            "assumptions": "Doanh nghiệp hoàn thành 100% kế hoạch kinh doanh, biên lợi nhuận duy trì ổn định, nền kinh tế vĩ mô tăng trưởng 6.5-7.0%."
+            "assumptions": f"{ticker}: giữ giả định định giá; tăng trưởng doanh thu tham chiếu {fundamental_analysis.get('rev_growth_yoy', 0):+.1f}%, ROE {fundamental_analysis.get('roe', 0):.1f}%."
         },
         "bear_case": {
             "target_price": bear_target,
             "downside_pct": bear_downside,
             "probability": prob_bear,
-            "assumptions": "Chi phí nguyên vật liệu tăng cao, tỷ giá USD/VND biến động mạnh, thị trường chung chịu áp lực điều chỉnh chiết khấu định giá."
+            "assumptions": f"{ticker}: mất hỗ trợ {support_2:,.0f} đ hoặc lợi nhuận suy yếu; biên ròng tham chiếu {fundamental_analysis.get('net_margin', 0):.1f}%."
         },
         "weighted_target_price": weighted_target,
         "weighted_upside_pct": weighted_upside,
@@ -281,3 +274,4 @@ def build_scenario_matrix(
         "recommended_buy_zone": buy_zone,
         "stop_loss_price": stop_loss_price
     }
+

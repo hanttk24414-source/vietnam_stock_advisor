@@ -7,3 +7,10 @@ __pycache__/
 venv/
 .pytest_cache/
 reports/*.pdf
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+data/cache/*_v2.json
+reports/test_*.pdf
+reports/temp_charts/

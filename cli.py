@@ -20,7 +20,7 @@ if sys.stdout.encoding != "utf-8":
 
 from config import REPORTS_DIR, SUPPORTED_TICKERS
 from data.macro_loader import fetch_macro_indicators, fetch_vnindex_history
-from data.stock_loader import fetch_stock_price_history, fetch_stock_fundamentals, clean_ticker
+from data.stock_loader import fetch_stock_price_history, fetch_stock_fundamentals, clean_ticker, sync_market_price
 from analytics.macro_engine import analyze_macro_environment
 from analytics.industry_engine import evaluate_industry_and_peers
 from analytics.technical_engine import compute_technical_indicators
@@ -54,7 +54,7 @@ def run_analysis(
 
     print(f"[2/5] Thu thập dữ liệu giao dịch & BCTC của {ticker}...")
     price_df = fetch_stock_price_history(ticker, days)
-    stock_raw = fetch_stock_fundamentals(ticker)
+    stock_raw = sync_market_price(fetch_stock_fundamentals(ticker), price_df)
     print(f"      -> Doanh nghiệp: {stock_raw.get('name')} | Ngành: {stock_raw.get('sector')}")
     print(f"      -> Số phiên giao dịch đã tải: {len(price_df)} | BCTC: {len(stock_raw.get('financial_history', []))} năm")
 
@@ -63,8 +63,11 @@ def run_analysis(
     fund_res = analyze_fundamentals(stock_raw)
     ind_res = evaluate_industry_and_peers(stock_raw.get("sector_code", "STEEL"), stock_raw)
     print(f"      -> Tín hiệu Kỹ thuật: {tech_res.get('overall_signal')} (RSI: {tech_res.get('rsi', 0):.1f})")
-    print(f"      -> Hiệu quả: ROE {fund_res.get('roe'):.1f}% | Biên ròng {fund_res.get('net_margin'):.1f}% | D/E {fund_res.get('debt_to_equity'):.2f}x")
+    if fund_res.get("available"):
+        print(f"      -> Hiệu quả: ROE {fund_res.get('roe'):.1f}% | Biên ròng {fund_res.get('net_margin'):.1f}% | D/E {fund_res.get('debt_to_equity'):.2f}x")
 
+    if not fund_res.get("available") or fund_res.get("missing_fields"):
+        raise ValueError(f"{ticker}: chưa đủ BCTC để xuất báo cáo đầu tư đầy đủ. Hãy xem phân tích kỹ thuật trên ứng dụng.")
     print("[4/5] Định giá đa mô hình & Chấm điểm Quant Multi-Factor...")
     val_res = perform_valuation(
         stock_raw,
@@ -74,7 +77,9 @@ def run_analysis(
         custom_wacc=wacc,
         custom_g=g
     )
-    score_res = calculate_quant_scorecard(fund_res, tech_res, val_res, ind_res, macro_res)
+    score_res = calculate_quant_scorecard(fund_res, tech_res, val_res, ind_res, macro_res, ticker=ticker, price_status=price_df.attrs)
+    print(score_res["summary"])
+    print(score_res["action_guide"])
     scen_res = build_scenario_matrix(val_res["current_price"], val_res["blended_target_price"], fund_res, tech_res)
     
     cur_p = val_res["current_price"]
@@ -124,14 +129,18 @@ def main():
     parser.add_argument("--notes", type=str, default=None, help="Ghi chú thêm của chuyên viên phân tích")
     
     args = parser.parse_args()
-    run_analysis(
-        ticker=args.ticker,
-        timeframe=args.timeframe,
-        output_filename=args.output,
-        wacc=args.wacc,
-        g=args.g,
-        notes=args.notes
-    )
+    try:
+        run_analysis(
+            ticker=args.ticker,
+            timeframe=args.timeframe,
+            output_filename=args.output,
+            wacc=args.wacc,
+            g=args.g,
+            notes=args.notes
+        )
+    except ValueError as exc:
+        parser.exit(1, f"Lỗi dữ liệu: {exc}\n")
 
 if __name__ == "__main__":
     main()
+

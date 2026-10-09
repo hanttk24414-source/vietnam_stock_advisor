@@ -16,15 +16,25 @@ def analyze_fundamentals(stock_fundamentals: Dict[str, Any]) -> Dict[str, Any]:
     """
     history: List[Dict[str, Any]] = stock_fundamentals.get("financial_history", [])
     
-    current_price = stock_fundamentals.get("current_price", 20000.0)
-    shares = stock_fundamentals.get("shares_outstanding", 1_000_000_000)
+    required = {"revenue", "net_income", "total_assets", "equity"}
+    if len(history) >= 2 and not all(required <= row.keys() for row in history[-2:]):
+        return {"ticker": stock_fundamentals.get("ticker", ""), "available": False,
+                "missing_fields": sorted(set().union(*(required - row.keys() for row in history[-2:])))}
+    if len(history) >= 2 and (history[-1]["equity"] <= 0 or history[-1]["total_assets"] <= 0):
+        return {"ticker": stock_fundamentals.get("ticker", ""), "available": False,
+                "missing_fields": ["Vốn chủ sở hữu/tài sản không dương; cần mô hình doanh nghiệp gặp khó khăn"]}
+    if len(history) >= 2 and int(history[-1]["year"]) - int(history[-2]["year"]) != 1:
+        return {"ticker": stock_fundamentals.get("ticker", ""), "available": False,
+                "missing_fields": ["BCTC hai năm liên tiếp để so sánh YoY"]}
+    current_price = stock_fundamentals.get("current_price", 0.0)
+    shares = stock_fundamentals.get("shares_outstanding", 0)
     
     # 1. Trích xuất chuỗi lịch sử nếu có
     if len(history) >= 2:
         latest = history[-1]
         prev = history[-2]
-        oldest = history[0]
-        n_years = len(history) - 1
+        oldest = next(row for row in history if required <= row.keys())
+        n_years = max(1, int(latest["year"]) - int(oldest["year"]))
         
         rev_latest = latest.get("revenue", 1.0)
         rev_oldest = oldest.get("revenue", 1.0)
@@ -63,32 +73,15 @@ def analyze_fundamentals(stock_fundamentals: Dict[str, Any]) -> Dict[str, Any]:
         ocf = latest.get("ocf", 0.0)
         capex = latest.get("capex", 0.0)
         fcf = latest.get("fcf", ocf - capex)
-        ocf_to_ni = (ocf / ni_latest) if ni_latest > 0 else 1.0
+        ocf_to_ni = (ocf / ni_latest) if ni_latest > 0 else 0.0
 
         # Tính EPS & BVPS
-        eps = (ni_latest * 1e9) / shares if shares > 0 else 2500.0
-        bvps = (equity * 1e9) / shares if shares > 0 else 18000.0
+        eps = (ni_latest * 1e9) / shares if shares > 0 else 0.0
+        bvps = (equity * 1e9) / shares if shares > 0 else 0.0
     else:
-        # Fallback từ meta
-        rev_growth_yoy = stock_fundamentals.get("rev_growth_yoy", 15.0)
-        ni_growth_yoy = stock_fundamentals.get("earnings_growth_yoy", 12.0)
-        rev_cagr = 14.5
-        ni_cagr = 16.0
-        gross_margin = stock_fundamentals.get("gross_margin", 20.0)
-        ebit_margin = 15.0
-        net_margin = stock_fundamentals.get("net_margin", 10.0)
-        roe = stock_fundamentals.get("roe", 16.0)
-        roa = stock_fundamentals.get("roa", 8.0)
-        asset_turnover = 0.75
-        equity_multiplier = 1.85
-        debt_to_equity = stock_fundamentals.get("debt_to_equity", 0.65)
-        net_debt = 25000.0
-        ocf = 18000.0
-        capex = 12000.0
-        fcf = 6000.0
-        ocf_to_ni = 1.2
-        eps = current_price / stock_fundamentals.get("pe", 10.0) if stock_fundamentals.get("pe", 0) > 0 else 2500.0
-        bvps = current_price / stock_fundamentals.get("pb", 1.5) if stock_fundamentals.get("pb", 0) > 0 else 18000.0
+        return {"ticker": stock_fundamentals.get("ticker", ""), "available": False,
+                "missing_fields": ["BCTC ít nhất hai năm"],
+                "data_source": stock_fundamentals.get("data_source", "Chưa xác định")}
 
     # 2. Đánh giá Chất lượng Dòng tiền (Cash Flow Quality)
     if ocf_to_ni >= 1.0:
@@ -124,6 +117,13 @@ def analyze_fundamentals(stock_fundamentals: Dict[str, Any]) -> Dict[str, Any]:
         dupont_assessment += "Doanh nghiệp cân bằng tốt giữa biên lợi nhuận và quy mô hoạt động."
 
     return {
+        "ticker": stock_fundamentals.get("ticker", ""),
+        "available": True,
+        "period": f"{prev['year']} → {latest['year']}",
+        "loss_making": latest["net_income"] <= 0,
+        "sector_code": stock_fundamentals.get("sector_code", "GENERAL"),
+        "data_source": stock_fundamentals.get("data_source", "Chưa xác định"),
+        "missing_fields": sorted({key for key in ["debt", "cash", "ocf", "capex"] if key not in latest}),
         "rev_growth_yoy": round(rev_growth_yoy, 1),
         "ni_growth_yoy": round(ni_growth_yoy, 1),
         "rev_cagr_3y": round(rev_cagr, 1),
@@ -149,3 +149,4 @@ def analyze_fundamentals(stock_fundamentals: Dict[str, Any]) -> Dict[str, Any]:
         "eps": round(eps, 0),
         "bvps": round(bvps, 0)
     }
+

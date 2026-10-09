@@ -12,14 +12,14 @@ from analytics.fundamental_engine import analyze_fundamentals
 from analytics.valuation_engine import perform_valuation
 from analytics.scorecard_engine import calculate_quant_scorecard, build_scenario_matrix
 from data.macro_loader import fetch_macro_indicators
-from data.stock_loader import fetch_stock_fundamentals, fetch_stock_price_history
+from tests.fixtures import stock_fixture, prices_fixture, macro_fixture
 
 class TestAnalytics(unittest.TestCase):
 
     def setUp(self):
-        self.macro_raw = fetch_macro_indicators()
-        self.stock_raw = fetch_stock_fundamentals("HPG")
-        self.price_df = fetch_stock_price_history("HPG", 120)
+        self.macro_raw = macro_fixture()
+        self.stock_raw = stock_fixture("HPG")
+        self.price_df = prices_fixture(120)
 
     def test_macro_engine(self):
         macro_res = analyze_macro_environment(self.macro_raw)
@@ -89,3 +89,4 @@ class TestAnalytics(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

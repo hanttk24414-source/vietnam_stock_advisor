@@ -21,6 +21,12 @@ def perform_valuation(
     """
     Thực hiện định giá tài chính chuẩn mực theo nhiều phương pháp và tổng hợp giá mục tiêu 12 tháng.
     """
+    if not fundamental_analysis.get("available", True):
+        raise ValueError("Chưa có BCTC đủ để định giá.")
+    if stock_fundamentals.get("shares_outstanding", 0) <= 0:
+        raise ValueError("Chưa có số cổ phiếu lưu hành từ nguồn dữ liệu.")
+    if industry_analysis.get("benchmark_pe", 0) <= 0 or industry_analysis.get("benchmark_pb", 0) <= 0:
+        raise ValueError("Chưa có giả định định giá phù hợp với ngành này.")
     current_price = stock_fundamentals.get("current_price", 20000.0)
     shares = stock_fundamentals.get("shares_outstanding", 1_000_000_000)
     sector_code = stock_fundamentals.get("sector_code", "STEEL")
@@ -36,7 +42,8 @@ def perform_valuation(
     # 1. Định giá theo P/E
     # Áp dụng P/E mục tiêu hài hòa giữa trung bình ngành và lịch sử
     target_pe = bench_pe * 0.95
-    pe_fair_value = round(eps * target_pe, 0)
+    pe_available = eps > 0
+    pe_fair_value = round(eps * target_pe, 0) if pe_available else 0
     pe_upside = round(((pe_fair_value - current_price) / current_price) * 100, 1)
 
     # 2. Định giá theo P/B
@@ -66,12 +73,13 @@ def perform_valuation(
     wacc = custom_wacc if custom_wacc is not None else max(0.085, calc_wacc)
 
     # Dự phóng FCFF 5 năm
-    # Nếu FCF gần nhất âm do CapEx mở rộng lớn (như HPG Dung Quất 2), chuẩn hóa FCF dựa trên NOPAT + Khấu hao - CapEx duy trì
+    # Không đưa DCF vào kết quả khi FCF âm hoặc thiếu dữ liệu.
     base_fcf = fcf_latest
-    if base_fcf <= 0:
-        base_fcf = abs(fundamental_analysis.get("ocf_bil", 15000.0)) * 0.45
+    dcf_available = (base_fcf > 0 and sector_code not in ["BANKING", "BROKERAGE"]
+                     and not fundamental_analysis.get("missing_fields"))
 
-    growth_rates = [0.15, 0.13, 0.11, 0.09, 0.07]
+    growth_anchor = max(-0.05, min(0.20, fundamental_analysis.get("rev_cagr_3y", 0) / 100))
+    growth_rates = [growth_anchor + (g_terminal - growth_anchor) * i / 5 for i in range(5)]
     projected_fcf = []
     pv_fcf = 0.0
     cur_fcf = base_fcf
@@ -92,11 +100,11 @@ def perform_valuation(
     enterprise_value = pv_fcf + pv_terminal_value
     equity_value = enterprise_value - net_debt
     dcf_fair_value = round((equity_value * 1e9) / shares, 0) if shares > 0 else current_price * 1.15
-    dcf_fair_value = max(current_price * 0.5, dcf_fair_value)
+    dcf_fair_value = max(0, dcf_fair_value) if dcf_available else 0
     dcf_upside = round(((dcf_fair_value - current_price) / current_price) * 100, 1)
 
     # 4. Trọng số tổng hợp (Blended Fair Value)
-    if sector_code == "BANKING":
+    if sector_code in ["BANKING", "BROKERAGE"] or not dcf_available:
         # Ngân hàng không áp dụng DCF FCFF
         weights = {"pe": 0.45, "pb": 0.55, "dcf": 0.0}
         blended_target = round((pe_fair_value * 0.45) + (pb_fair_value * 0.55), 0)
@@ -104,10 +112,20 @@ def perform_valuation(
         weights = {"pe": 0.30, "pb": 0.30, "dcf": 0.40}
         blended_target = round((pe_fair_value * 0.30) + (pb_fair_value * 0.30) + (dcf_fair_value * 0.40), 0)
 
+    if not pe_available:
+        weights = {"pe": 0.0, "pb": 1.0, "dcf": 0.0}
+        blended_target = pb_fair_value
+    if blended_target <= 0:
+        raise ValueError("Mô hình chưa có giá mục tiêu dương hợp lệ.")
     blended_upside = round(((blended_target - current_price) / current_price) * 100, 1)
     margin_of_safety = round(blended_upside, 1) if blended_upside > 0 else 0.0
 
     return {
+        "benchmark_source": industry_analysis.get("benchmark_source", "Giả định tham chiếu"),
+        "available": True,
+        "dcf_available": dcf_available,
+        "pe_available": pe_available,
+        "assumptions": "P/E và P/B ngành là giả định tham chiếu; DCF dùng OCF−CapEx làm xấp xỉ dòng tiền, chưa phải FCFF chuẩn hóa.",
         "current_price": current_price,
         "pe_fair_value": pe_fair_value,
         "pe_upside": pe_upside,
@@ -128,3 +146,4 @@ def perform_valuation(
         "projected_fcf": projected_fcf,
         "method_weights": weights
     }
+

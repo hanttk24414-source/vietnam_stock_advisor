@@ -15,13 +15,14 @@ import streamlit as st
 from config import SUPPORTED_TICKERS, MACRO_DEFAULTS, REPORTS_DIR, RATING_SCALE
 from data.macro_loader import fetch_macro_indicators, fetch_vnindex_history
 from data.industry_loader import get_industry_analysis
-from data.stock_loader import fetch_stock_price_history, fetch_stock_fundamentals, clean_ticker
+from data.stock_loader import fetch_stock_price_history, fetch_stock_fundamentals, clean_ticker, fetch_stock_list, sync_market_price, DataUnavailableError
 from analytics.macro_engine import analyze_macro_environment
 from analytics.industry_engine import evaluate_industry_and_peers
 from analytics.technical_engine import compute_technical_indicators
 from analytics.fundamental_engine import analyze_fundamentals
 from analytics.valuation_engine import perform_valuation
 from analytics.scorecard_engine import calculate_quant_scorecard, build_scenario_matrix
+from analytics.recommendation_engine import build_recommendation
 from reporting.pdf_generator import create_investment_report_pdf
 from data.dnse_loader import dnse_configured
 
@@ -100,22 +101,30 @@ with st.sidebar:
     st.markdown("### ⚙️ BỘ ĐIỀU KHIỂN HỆ THỐNG")
     
     if dnse_configured():
-        st.success("Nguồn giá DNSE: đã cấu hình API (sẽ ưu tiên DNSE khi truy vấn).")
+        st.success("Nguồn giá DNSE: đã cấu hình API; sẽ ưu tiên khi truy vấn.")
     else:
-        st.info("Chưa cấu hình DNSE: tạo file .env trên máy với DNSE_API_KEY và DNSE_API_SECRET.")
-
+        st.info("Chưa cấu hình DNSE: điền DNSE_API_KEY và DNSE_API_SECRET trong .env trên máy.")
     # 1. Chọn mã cổ phiếu
-    ticker_options = list(SUPPORTED_TICKERS.keys())
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def listed_stocks():
+        return fetch_stock_list()
+    stock_list = listed_stocks()
+    ticker_options = sorted(set(stock_list) | set(SUPPORTED_TICKERS))
     selected_ticker = st.selectbox(
         "📌 Chọn mã cổ phiếu phân tích:",
         ticker_options,
-        index=0,
+        index=ticker_options.index("HPG"),
+        format_func=lambda sym: f"{sym} — {stock_list.get(sym, SUPPORTED_TICKERS.get(sym, {})).get('name', sym)}",
         help="Chọn mã cổ phiếu trong danh mục trọng điểm hoặc nhập mã khác bên dưới"
     )
     
-    custom_input = st.text_input("Hoặc nhập mã CP khác (ví dụ: TCB, FPT, MBB):", "").strip().upper()
+    custom_input = st.text_input("Hoặc nhập mã CP khác (ví dụ: TCB, VNM, MBB):", "").strip()
     if custom_input:
-        selected_ticker = custom_input
+        try:
+            selected_ticker = clean_ticker(custom_input)
+        except ValueError as exc:
+            st.error(str(exc))
+            st.stop()
 
     # 2. Chọn khung thời gian
     timeframe = st.selectbox(
@@ -131,6 +140,11 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 🎛️ THAM SỐ ĐỊNH GIÁ DCF")
+    custom_benchmarks = st.checkbox("Tự nhập giả định P/E, P/B ngành", value=False,
+                                   help="Dùng khi ngành chưa có benchmark; số nhập là giả định của bạn.")
+    if custom_benchmarks:
+        custom_pe = st.number_input("P/E mục tiêu tham chiếu ngành (lần)", min_value=1.0, value=12.0)
+        custom_pb = st.number_input("P/B mục tiêu tham chiếu ngành (lần)", min_value=0.1, value=1.5)
     wacc_input = st.slider("Chi phí vốn bình quân WACC (%):", 6.0, 14.0, 8.5, 0.25) / 100.0
     g_input = st.slider("Tăng trưởng dài hạn vĩnh viễn g (%):", 2.0, 5.0, 3.5, 0.25) / 100.0
 
@@ -145,71 +159,100 @@ with st.sidebar:
     
     custom_analyst_notes = st.text_area(
         "Ghi chú của chuyên viên phân tích:",
-        "Chỉ sử dụng kết quả khi đã đối chiếu dữ liệu nguồn và giả định định giá."
+        ""
     )
 
 # ----------------- TẢI & XỬ LÝ DỮ LIỆU ĐA TẦNG -----------------
-try:
-    # ----------------- TẢI & XỬ LÝ DỮ LIỆU ĐA TẦNG -----------------
-    with st.spinner(f"Đang phân tích cơ hội đầu tư cho mã {selected_ticker}..."):
-        # 1. Dữ liệu Vĩ mô
-        macro_raw = fetch_macro_indicators()
-        vnindex_df = fetch_vnindex_history(days_to_fetch)
-        macro_analysis = analyze_macro_environment(macro_raw)
+with st.spinner(f"Đang phân tích cơ hội đầu tư cho mã {selected_ticker}..."):
+    # Cache market context independently from the selected ticker.
+    @st.cache_data(ttl=900, show_spinner=False)
+    def load_macro(days):
+        return fetch_macro_indicators(), fetch_vnindex_history(days)
+    macro_raw, vnindex_df = load_macro(days_to_fetch)
+    macro_analysis = analyze_macro_environment(macro_raw)
 
-        # 2. Dữ liệu Cổ phiếu
-        price_df = fetch_stock_price_history(selected_ticker, days_to_fetch)
-        stock_raw = fetch_stock_fundamentals(selected_ticker)
-        if not price_df.empty:
-            stock_raw["current_price"] = float(price_df["close"].iloc[-1])
-            stock_raw["price_data_source"] = price_df.attrs.get("data_source", "VNDirect/Yahoo")
+    # 2. Dữ liệu Cổ phiếu
+    @st.cache_data(ttl=900, show_spinner=False)
+    def load_stock(symbol, days):
+        frame = fetch_stock_price_history(symbol, days)
+        raw = sync_market_price(fetch_stock_fundamentals(symbol), frame)
+        return frame, raw
+    try:
+        price_df, stock_raw = load_stock(selected_ticker, days_to_fetch)
+    except (DataUnavailableError, ValueError) as exc:
+        st.error(str(exc))
+        st.stop()
+    st.caption(f"{selected_ticker} · Nguồn giá: {price_df.attrs.get('data_source')} · Phiên cuối: {price_df.attrs.get('price_as_of')} · BCTC: {stock_raw.get('data_source')}")
+    if price_df.attrs.get('stale') or price_df.attrs.get('cached'):
+        st.warning("Giá từ cache hoặc chưa cập nhật; kiểm tra phiên giao dịch cuối trước khi sử dụng.")
+    if stock_raw.get('data_warning'):
+        st.warning(stock_raw['data_warning'])
+    
+    # 3. Động cơ Phân tích
+    tech_analysis = compute_technical_indicators(price_df, vnindex_df)
+    fund_analysis = analyze_fundamentals(stock_raw)
+    sector_code = stock_raw.get("sector_code", "GENERAL")
+    ind_analysis = evaluate_industry_and_peers(sector_code, stock_raw)
+    if custom_benchmarks:
+        ind_analysis.update(benchmark_pe=custom_pe, benchmark_pb=custom_pb,
+                            benchmark_source="Giả định do người dùng nhập")
+        pe, pb = stock_raw.get('pe', 0), stock_raw.get('pb', 0)
+        ind_analysis['pe_discount_pct'] = (1-pe/custom_pe)*100 if pe > 0 else 0
+        ind_analysis['pb_discount_pct'] = (1-pb/custom_pb)*100 if pb > 0 else 0
+    st.caption(ind_analysis['benchmark_source'])
+    st.caption("GDP/CPI/lãi suất và benchmark ngành trong bản này còn có giá trị cấu hình; cần đối chiếu nguồn công bố.")
+    
+    if not tech_analysis:
+        st.warning("Chưa đủ 20 phiên hợp lệ để phân tích kỹ thuật.")
+        st.line_chart(price_df['close'])
+        st.stop()
+    try:
+        val_analysis = perform_valuation(stock_raw, fund_analysis, ind_analysis,
+            beta=tech_analysis.get("beta", 1.1), custom_wacc=wacc_input, custom_g=g_input)
+    except ValueError as exc:
+        val_analysis = {"available": False}
+        st.warning(str(exc))
+    if not fund_analysis.get('available') or fund_analysis.get('missing_fields') or not val_analysis.get('available'):
+        recommendation = build_recommendation(selected_ticker, tech_analysis, fund_analysis,
+                                               val_analysis, price_status=price_df.attrs)
+        st.subheader(f"Phân tích {selected_ticker}")
+        st.info(recommendation['rating'])
+        st.write(recommendation['action_guide'])
+        for fact in recommendation['evidence']:
+            st.write(fact)
+        st.line_chart(price_df['close'])
+        st.write("Điều kiện xác nhận kỹ thuật: " + recommendation['confirmation'])
+        st.write("Điều kiện đánh giá lại: " + recommendation['invalidation'])
+        for risk in recommendation['risks']:
+            st.warning(risk)
+        if stock_raw.get('financial_history'):
+            st.dataframe(pd.DataFrame(stock_raw['financial_history']), hide_index=True)
+        st.caption("Báo cáo đầu tư đầy đủ sẽ khả dụng khi có đủ BCTC, số cổ phiếu lưu hành và cơ sở định giá ngành.")
+        st.stop()
 
-        
-        # 3. Động cơ Phân tích
-        tech_analysis = compute_technical_indicators(price_df, vnindex_df)
-        fund_analysis = analyze_fundamentals(stock_raw)
-        sector_code = stock_raw.get("sector_code", "GENERAL")
-        ind_analysis = evaluate_industry_and_peers(sector_code, stock_raw)
-        
-        if not ind_analysis.get("benchmark_pe") or not ind_analysis.get("benchmark_pb"):
-            raise RuntimeError("Chưa có bộ dữ liệu so sánh ngành phù hợp cho mã này. Hệ thống không tự gán ngành thép hoặc định giá khi thiếu dữ liệu ngành.")
-        if not tech_analysis:
-            raise RuntimeError("Không đủ dữ liệu giá để phân tích kỹ thuật.")
+    scorecard_analysis = calculate_quant_scorecard(
+        fund_analysis,
+        tech_analysis,
+        val_analysis,
+        ind_analysis,
+        macro_analysis,
+        ticker=selected_ticker, price_status=price_df.attrs
+    )
+    scenario_analysis = build_scenario_matrix(
+        val_analysis["current_price"],
+        val_analysis["blended_target_price"],
+        fund_analysis,
+        tech_analysis
+    )
 
-        val_analysis = perform_valuation(
-            stock_raw,
-            fund_analysis,
-            ind_analysis,
-            beta=tech_analysis.get("beta", 1.1),
-            custom_wacc=wacc_input,
-            custom_g=g_input
-        )
-        scorecard_analysis = calculate_quant_scorecard(
-            fund_analysis,
-            tech_analysis,
-            val_analysis,
-            ind_analysis,
-            macro_analysis
-        )
-        scenario_analysis = build_scenario_matrix(
-            val_analysis["current_price"],
-            val_analysis["blended_target_price"],
-            fund_analysis,
-            tech_analysis
-        )
-
-except Exception as exc:
-    st.error(f"Không thể đưa ra khuyến nghị có cơ sở cho {selected_ticker}: {exc}")
-    st.info("Bạn có thể nhập mã cổ phiếu khác; chỉ mã có giá, BCTC và dữ liệu ngành phù hợp mới được định giá. Không tự dùng số liệu của HPG cho mã khác.")
-    st.stop()
-
-if stock_raw.get("data_mode") == "DEMO":
-    st.warning(f"⚠️ {selected_ticker}: Báo cáo tài chính đang dùng dữ liệu MẪU (DEMO), không phải số liệu kiểm chứng.")
-else:
-    st.caption(f"Nguồn BCTC: {stock_raw.get('data_source', 'chưa rõ')} | Dữ liệu vĩ mô và các chuẩn ngành của bản này là giả định/mẫu, cần đối chiếu trước khi đầu tư.")
-
-st.caption(f"Nguồn giá: {stock_raw.get('price_data_source', 'chưa xác định')} | Nguồn BCTC: {stock_raw.get('data_source', 'chưa xác định')}")
 # ----------------- HEADER & EXECUTIVE KPI CARDS -----------------
+st.subheader(f"Khuyến nghị cho {selected_ticker}: {scorecard_analysis['rating']}")
+st.write(scorecard_analysis['summary'])
+st.write(scorecard_analysis['action_guide'])
+st.write("Xác nhận: " + scorecard_analysis['confirmation'])
+st.write("Đánh giá lại: " + scorecard_analysis['invalidation'])
+st.caption(val_analysis['assumptions'])
+st.caption(scenario_analysis['assumption_notice'])
 st.markdown(f"<div class='main-title'>HỆ THỐNG PHÂN TÍCH CƠ HỘI ĐẦU TƯ: {selected_ticker} ({stock_raw.get('exchange', 'HOSE')})</div>", unsafe_allow_html=True)
 st.markdown(f"<div class='sub-title'><b>{stock_raw.get('name', '')}</b>  |  Ngành: <b>{stock_raw.get('sector', '')}</b>  |  Ngày cập nhật: <b>{analysis_date.strftime('%d/%m/%Y')}</b></div>", unsafe_allow_html=True)
 
@@ -506,9 +549,9 @@ with tab4:
     with col_v1:
         st.markdown("#### ⚖️ Định giá Cổ phiếu Đa Phương pháp")
         v_table_df = pd.DataFrame([
-            {"Phương pháp": "1. Định giá theo P/E Mục tiêu", "Giá trị Hợp lý": f"{val_analysis.get('pe_fair_value', 0):,.0f} đ", "Upside (%)": f"+{val_analysis.get('pe_upside', 0):.1f}%", "Trọng số": "30%"},
-            {"Phương pháp": "2. Định giá theo P/B Mục tiêu", "Giá trị Hợp lý": f"{val_analysis.get('pb_fair_value', 0):,.0f} đ", "Upside (%)": f"+{val_analysis.get('pb_upside', 0):.1f}%", "Trọng số": "30%"},
-            {"Phương pháp": "3. Chiết khấu Dòng tiền DCF FCFF", "Giá trị Hợp lý": f"{val_analysis.get('dcf_fair_value', 0):,.0f} đ", "Upside (%)": f"+{val_analysis.get('dcf_upside', 0):.1f}%", "Trọng số": "40%"},
+            {"Phương pháp": "1. Định giá theo P/E Mục tiêu", "Giá trị Hợp lý": f"{val_analysis.get('pe_fair_value', 0):,.0f} đ", "Upside (%)": f"+{val_analysis.get('pe_upside', 0):.1f}%", "Trọng số": f"{val_analysis['method_weights']['pe']:.0%}"},
+            {"Phương pháp": "2. Định giá theo P/B Mục tiêu", "Giá trị Hợp lý": f"{val_analysis.get('pb_fair_value', 0):,.0f} đ", "Upside (%)": f"+{val_analysis.get('pb_upside', 0):.1f}%", "Trọng số": f"{val_analysis['method_weights']['pb']:.0%}"},
+            {"Phương pháp": "3. Chiết khấu Dòng tiền DCF FCFF", "Giá trị Hợp lý": f"{val_analysis.get('dcf_fair_value', 0):,.0f} đ" if val_analysis['dcf_available'] else "Không áp dụng", "Upside (%)": f"{val_analysis.get('dcf_upside', 0):+.1f}%" if val_analysis['dcf_available'] else "—", "Trọng số": f"{val_analysis['method_weights']['dcf']:.0%}"},
             {"Phương pháp": "⭐ GIÁ MỤC TIÊU TỔNG HỢP (BLENDED)", "Giá trị Hợp lý": f"{target_p:,.0f} đ", "Upside (%)": f"+{up_pct:.1f}%", "Trọng số": "100%"}
         ])
         st.dataframe(v_table_df, hide_index=True, use_container_width=True)
@@ -583,7 +626,7 @@ with tab4:
         st.dataframe(pd.DataFrame(score_breakdown), hide_index=True, use_container_width=True)
         
         st.markdown(f"**Tổng điểm Multi-Factor:** `{total_score:.1f} / 100`  👉  **Xếp hạng:** `{rating}`")
-        st.markdown(f"**Chiến lược hành động dựa trên dữ liệu mã {selected_ticker}:** {scorecard_analysis.get('action_guide', '')}")
+        st.markdown(f"**Chiến lược hành động:** {scorecard_analysis.get('action_guide', '')}")
 
     st.markdown("##### 📌 Phân tích Điểm mạnh & Rủi ro Từ Scorecard:")
     c_str, c_rsk = st.columns(2)
@@ -674,3 +717,4 @@ with tab5:
             st.markdown(f"- 📄 **{rf.name}** ({f_size:.1f} KB) - *Tạo lúc: {datetime.fromtimestamp(os.path.getmtime(rf)).strftime('%H:%M:%S %d/%m/%Y')}*")
     else:
         st.info("Chưa có file báo cáo nào được tạo.")
+

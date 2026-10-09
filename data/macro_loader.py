@@ -45,9 +45,8 @@ def fetch_vnindex_history(days: int = 365) -> pd.DataFrame:
     if dnse_configured():
         try:
             return fetch_dnse_history("VNINDEX", days)
-        except Exception as exc:
-            print(f"[Warning] DNSE VNINDEX không khả dụng: {exc}. Thử VNDirect.")
-
+        except Exception:
+            pass
     to_time = int(time.time())
     from_time = to_time - int(days * 86400 * 1.5) # lấy dư ngày giao dịch
     url = f"https://dchart-api.vndirect.com.vn/dchart/history?resolution=D&symbol=VNINDEX&from={from_time}&to={to_time}"
@@ -88,21 +87,8 @@ def fetch_vnindex_history(days: int = 365) -> pd.DataFrame:
         except Exception:
             pass
 
-    # Fallback giả lập dữ liệu chuẩn dựa trên mốc thị trường 1730-1760 điểm
-    dates = pd.date_range(end=datetime.now(), periods=days, freq="B")
-    base_val = 1500.0
-    import numpy as np
-    np.random.seed(42)
-    changes = np.random.normal(0.0005, 0.01, size=len(dates))
-    prices = base_val * np.cumprod(1 + changes)
-    df = pd.DataFrame({
-        "open": prices * 0.998,
-        "high": prices * 1.008,
-        "low": prices * 0.992,
-        "close": prices,
-        "volume": np.random.randint(400_000_000, 750_000_000, size=len(dates))
-    }, index=dates)
-    return df
+    # No fabricated index returns: unavailable market history leaves beta as an assumption.
+    return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
 def fetch_macro_indicators() -> dict:
     """
@@ -201,3 +187,4 @@ def fetch_macro_indicators() -> dict:
         print(f"[Warning] Lưu macro cache thất bại: {e}")
 
     return result
+
