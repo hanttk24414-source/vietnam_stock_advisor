@@ -7,6 +7,7 @@ Nguồn dữ liệu:
 """
 
 import json
+import os
 import time
 from datetime import datetime, timedelta
 import pandas as pd
@@ -15,6 +16,10 @@ import yfinance as yf
 from config import CACHE_DIR, MACRO_DEFAULTS
 
 MACRO_CACHE_FILE = CACHE_DIR / "macro_data.json"
+
+def _demo_mode():
+    return os.getenv('STOCK_ADVISOR_DEMO', '').strip().lower() in {'1', 'true', 'yes'}
+
 
 DEFAULT_MACRO_FACTS = {
     "gdp_growth_2024": 6.82,
@@ -64,12 +69,14 @@ def fetch_vnindex_history(days: int = 365) -> pd.DataFrame:
                 })
                 df.set_index("date", inplace=True)
                 df.sort_index(inplace=True)
-                return df.tail(days)
+                df = df.tail(days)
+                df.attrs['data_source'] = 'VNDirect dchart'
+                return df
     except Exception as e:
         print(f"[Warning] Không thể lấy VNINDEX từ VNDirect API: {e}. Sử dụng dữ liệu dự phòng.")
         
-    # Fallback: đọc từ cache nếu có
-    if MACRO_CACHE_FILE.exists():
+    # Cache hiện tại chưa có bằng chứng nguồn, chỉ dùng để trình diễn.
+    if _demo_mode() and MACRO_CACHE_FILE.exists():
         try:
             with open(MACRO_CACHE_FILE, "r", encoding="utf-8") as f:
                 cached = json.load(f)
@@ -77,11 +84,16 @@ def fetch_vnindex_history(days: int = 365) -> pd.DataFrame:
                     df = pd.DataFrame(cached["vnindex_history"])
                     df["date"] = pd.to_datetime(df["date"])
                     df.set_index("date", inplace=True)
-                    return df.tail(days)
+                    df = df.tail(days)
+                    df.attrs['data_source'] = 'CACHE DEMO (chưa xác minh)'
+                    return df
         except Exception:
             pass
 
-    # Fallback giả lập dữ liệu chuẩn dựa trên mốc thị trường 1730-1760 điểm
+    if not _demo_mode():
+        raise RuntimeError('Không có dữ liệu VN-Index thật; ngừng phân tích, không tạo chỉ số ngẫu nhiên.')
+
+    # Fallback giả lập chỉ trong chế độ demo
     dates = pd.date_range(end=datetime.now(), periods=days, freq="B")
     base_val = 1500.0
     import numpy as np
@@ -95,6 +107,7 @@ def fetch_vnindex_history(days: int = 365) -> pd.DataFrame:
         "close": prices,
         "volume": np.random.randint(400_000_000, 750_000_000, size=len(dates))
     }, index=dates)
+    df.attrs['data_source'] = 'DỮ LIỆU GIẢ LẬP (DEMO)'
     return df
 
 def fetch_macro_indicators() -> dict:
@@ -104,7 +117,15 @@ def fetch_macro_indicators() -> dict:
     2. Tỷ giá USD/VND, Dầu, Vàng từ Yahoo Finance
     3. Các chỉ tiêu kinh tế vĩ mô chính thức của Việt Nam (GSO & SBV)
     """
+    if not _demo_mode():
+        raise RuntimeError(
+            'Chưa cấu hình nguồn GDP/CPI/lãi suất/ERP có thể xác minh cho chế độ THẬT. '
+            'Các giá trị vĩ mô gắn sẵn chỉ dùng trình diễn. '
+            'Đặt STOCK_ADVISOR_DEMO=1 để chạy bản mẫu, hoặc bổ sung dữ liệu vĩ mô xác minh.'
+        )
     result = dict(DEFAULT_MACRO_FACTS)
+    result['data_mode'] = 'DEMO'
+    result['data_source'] = 'THAM SỐ MẪU - CHƯA XÁC MINH, KHÔNG DÙNG ĐẦU TƯ'
     
     # 1. Lấy dữ liệu thị trường VN-Index
     try:
