@@ -59,6 +59,17 @@ vietnam_stock_advisor/
 
 ---
 
+## ⚠️ LƯU Ý QUAN TRỌNG VỀ DỮ LIỆU (NHÁNH SỬA AN TOÀN)
+
+**Bản này đang ở chế độ DEMO theo mặc định.** Một phần chuỗi giá, báo cáo tài chính và chỉ số vĩ mô được lưu trong mã nguồn dưới dạng dữ liệu mẫu hoặc giả định chưa kiểm chứng. Vì vậy các số như GDP, CPI, ROE, P/E, giá mục tiêu và khuyến nghị **không được coi là kết quả đầu tư thực tế**. PDF tạo từ giao diện được đánh dấu DEMO.
+
+- Chạy Streamlit: `python -m streamlit run app.py`, giữ bật ô **Chế độ DEMO** để trình diễn; tắt ô này sẽ ngừng phân tích do chưa có pipeline vĩ mô được xác minh.
+- Chạy CLI mẫu: `python cli.py --ticker HPG --demo`. Không có `--demo` CLI sẽ từ chối xuất kết quả từ bộ số liệu mẫu.
+- Nếu muốn dùng DNSE làm nguồn giá ưu tiên, cài `python -m pip install dnse-sdk-openapi` và cấu hình biến môi trường `DNSE_API_KEY`, `DNSE_API_SECRET` (không commit API key/secret lên GitHub). Có thể tùy chọn `DNSE_BASE_URL`, `DNSE_PRICE_MULTIPLIER` để điều chỉnh đơn vị giá sau khi đối chiếu với dữ liệu DNSE thực tế.
+- **DNSE chỉ giải quyết một phần dữ liệu giá OHLCV**; chưa thay thế được nguồn báo cáo tài chính doanh nghiệp hay bộ chỉ tiêu vĩ mô đáng tin cậy.
+- **Trước khi đưa vào sử dụng thực tế:** bổ sung dữ liệu GDP/CPI/lãi suất từ cơ quan chính thức với nguồn và thời điểm công bố, BCTC có thể kiểm tra của từng mã, lịch sử giá thực, các kiểm tra chất lượng/đơn vị và kiểm thử end-to-end. Chưa thực hiện xác minh live API trong môi trường hiện tại.
+- Trong mã, `STOCK_ADVISOR_DEMO=1` chỉ bật khi trình diễn; không bật thì loader giá/BCTC phải từ chối mô phỏng. Nếu dữ liệu không đủ điều kiện, không được xuất một báo cáo bị hiểu lầm là phân tích đầu tư chính thức.
+
 ## 🚀 3. HƯỚNG DẪN CÀI ĐẶT VÀ KHỞI CHẠY
 
 ### 3.1. Yêu cầu Môi trường
