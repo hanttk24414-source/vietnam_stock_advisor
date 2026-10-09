@@ -8,6 +8,7 @@ Nguồn dữ liệu:
 """
 
 import json
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,10 @@ import requests
 import yfinance as yf
 
 from config import CACHE_DIR, SUPPORTED_TICKERS
+from data.dnse_loader import configured as dnse_configured, fetch_daily_ohlcv
+
+def demo_enabled() -> bool:
+    return os.getenv('STOCK_ADVISOR_DEMO', '').strip().lower() in {'1', 'true', 'yes'}
 
 def clean_ticker(ticker: str) -> str:
     """Loại bỏ hậu tố .VN hoặc khoảng trắng nếu có."""
@@ -31,6 +36,12 @@ def fetch_stock_price_history(ticker: str, days: int = 365) -> pd.DataFrame:
     """
     sym = clean_ticker(ticker)
     
+    if dnse_configured():
+        try:
+            return fetch_daily_ohlcv(sym, days)
+        except Exception as exc:
+            print(f'[Notice] DNSE {sym}: {exc}; chuyển sang VNDirect/Yahoo.')
+
     # 1. Thử VNDirect API
     to_time = int(time.time())
     from_time = to_time - int(days * 86400 * 1.5)
@@ -55,7 +66,9 @@ def fetch_stock_price_history(ticker: str, days: int = 365) -> pd.DataFrame:
                 df.set_index("date", inplace=True)
                 df.sort_index(inplace=True)
                 if not df.empty:
-                    return df.tail(days)
+                    df = df.tail(days)
+                    df.attrs['data_source'] = 'VNDirect dchart'
+                    return df
     except Exception as e:
         print(f"[Notice] VNDirect API không khả dụng cho {sym}: {e}. Chuyển sang Yahoo Finance.")
 
@@ -76,22 +89,29 @@ def fetch_stock_price_history(ticker: str, days: int = 365) -> pd.DataFrame:
             }, index=pd.to_datetime(hist.index.date))
             df.index.name = "date"
             df.sort_index(inplace=True)
-            return df.tail(days)
+            df = df.tail(days)
+            df.attrs['data_source'] = 'Yahoo Finance'
+            return df
     except Exception as e:
         print(f"[Notice] Yahoo Finance không khả dụng cho {sym}: {e}. Đang kiểm tra cache.")
 
     # 3. Thử nạp từ Cache
     cache_file = CACHE_DIR / f"{sym}_history.json"
-    if cache_file.exists():
+    if demo_enabled() and cache_file.exists():
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
                 raw = json.load(f)
                 df = pd.DataFrame(raw)
                 df["date"] = pd.to_datetime(df["date"])
                 df.set_index("date", inplace=True)
-                return df.tail(days)
+                df = df.tail(days)
+                df.attrs['data_source'] = 'CACHE DEMO (chưa xác minh)'
+                return df
         except Exception:
             pass
+
+    if not demo_enabled():
+        raise RuntimeError(f'Không thể lấy giá THẬT của {sym}. Không tạo giá giả. Kiểm tra API hoặc bật STOCK_ADVISOR_DEMO=1 để thử bản mẫu.')
 
     # 4. Fallback mô phỏng nếu tất cả các nguồn trực tuyến bị gián đoạn
     dates = pd.date_range(end=datetime.now(), periods=days, freq="B")
@@ -107,6 +127,7 @@ def fetch_stock_price_history(ticker: str, days: int = 365) -> pd.DataFrame:
         "close": prices,
         "volume": np.random.randint(5_000_000, 25_000_000, size=len(dates))
     }, index=dates)
+    df.attrs['data_source'] = 'DỮ LIỆU GIẢ LẬP (DEMO)'
     return df
 
 def fetch_stock_fundamentals(ticker: str) -> Dict[str, Any]:
@@ -135,7 +156,7 @@ def fetch_stock_fundamentals(ticker: str) -> Dict[str, Any]:
         "ticker": sym,
         "name": company_meta["name"],
         "sector": company_meta["sector"],
-        "sector_code": company_meta.get("sector_code", "STEEL"),
+        "sector_code": company_meta.get("sector_code", "GENERAL"),
         "exchange": company_meta["exchange"],
         "shares_outstanding": company_meta["shares_outstanding"],
         "description": company_meta["description"],
@@ -217,15 +238,22 @@ def fetch_stock_fundamentals(ticker: str) -> Dict[str, Any]:
     except Exception as e:
         print(f"[Notice] Lỗi khi kéo BCTC qua yfinance cho {sym}: {e}")
 
-    # Nếu không lấy được hoặc thiếu, sử dụng dữ liệu chuẩn hoá kiểm chứng được từ BCTC các năm của doanh nghiệp
+    # Nếu không có BCTC thật: KHÔNG tự thay bằng dữ liệu mẫu ở chế độ phân tích.
     if not fetched_live or "financial_history" not in fundamentals or len(fundamentals.get("financial_history", [])) < 3:
+        if not demo_enabled():
+            raise RuntimeError(f'Không có BCTC đủ năm được xác minh cho {sym}. Dừng định giá thay vì dùng số liệu mẫu. Có thể bật STOCK_ADVISOR_DEMO=1 để trình diễn.')
         # Load benchmarked verified data cho các mã tiêu biểu
+        if sym not in SUPPORTED_TICKERS:
+            raise RuntimeError(f'Không có dữ liệu demo cho mã {sym}.')
         preset_data = get_preset_fundamentals(sym)
         for k, v in preset_data.items():
             if k not in fundamentals or fundamentals[k] == 0.0 or fundamentals[k] is None:
                 fundamentals[k] = v
         if "financial_history" not in fundamentals:
             fundamentals["financial_history"] = preset_data.get("financial_history", [])
+
+    fundamentals['data_mode'] = 'DEMO' if not fetched_live else 'LIVE_YAHOO'
+    fundamentals['data_source'] = 'BCTC Yahoo Finance' if fetched_live else 'BỘ DỮ LIỆU MẪU - KHÔNG XÁC MINH'
 
     # Lưu cache
     try:
