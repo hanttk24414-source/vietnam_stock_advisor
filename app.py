@@ -139,47 +139,59 @@ with st.sidebar:
     
     custom_analyst_notes = st.text_area(
         "Ghi chú của chuyên viên phân tích:",
-        "Khuyến nghị tích lũy dần theo vùng giá mục tiêu. Chú ý diễn biến thanh khoản thị trường chung."
+        "Chỉ sử dụng kết quả khi đã đối chiếu dữ liệu nguồn và giả định định giá."
     )
 
 # ----------------- TẢI & XỬ LÝ DỮ LIỆU ĐA TẦNG -----------------
-with st.spinner(f"Đang phân tích cơ hội đầu tư cho mã {selected_ticker}..."):
-    # 1. Dữ liệu Vĩ mô
-    macro_raw = fetch_macro_indicators()
-    vnindex_df = fetch_vnindex_history(days_to_fetch)
-    macro_analysis = analyze_macro_environment(macro_raw)
+try:
+    # ----------------- TẢI & XỬ LÝ DỮ LIỆU ĐA TẦNG -----------------
+    with st.spinner(f"Đang phân tích cơ hội đầu tư cho mã {selected_ticker}..."):
+        # 1. Dữ liệu Vĩ mô
+        macro_raw = fetch_macro_indicators()
+        vnindex_df = fetch_vnindex_history(days_to_fetch)
+        macro_analysis = analyze_macro_environment(macro_raw)
 
-    # 2. Dữ liệu Cổ phiếu
-    price_df = fetch_stock_price_history(selected_ticker, days_to_fetch)
-    stock_raw = fetch_stock_fundamentals(selected_ticker)
-    
-    # 3. Động cơ Phân tích
-    tech_analysis = compute_technical_indicators(price_df, vnindex_df)
-    fund_analysis = analyze_fundamentals(stock_raw)
-    sector_code = stock_raw.get("sector_code", "STEEL")
-    ind_analysis = evaluate_industry_and_peers(sector_code, stock_raw)
-    
-    val_analysis = perform_valuation(
-        stock_raw,
-        fund_analysis,
-        ind_analysis,
-        beta=tech_analysis.get("beta", 1.1),
-        custom_wacc=wacc_input,
-        custom_g=g_input
-    )
-    scorecard_analysis = calculate_quant_scorecard(
-        fund_analysis,
-        tech_analysis,
-        val_analysis,
-        ind_analysis,
-        macro_analysis
-    )
-    scenario_analysis = build_scenario_matrix(
-        val_analysis["current_price"],
-        val_analysis["blended_target_price"],
-        fund_analysis,
-        tech_analysis
-    )
+        # 2. Dữ liệu Cổ phiếu
+        price_df = fetch_stock_price_history(selected_ticker, days_to_fetch)
+        stock_raw = fetch_stock_fundamentals(selected_ticker)
+        
+        # 3. Động cơ Phân tích
+        tech_analysis = compute_technical_indicators(price_df, vnindex_df)
+        fund_analysis = analyze_fundamentals(stock_raw)
+        sector_code = stock_raw.get("sector_code", "GENERAL")
+        ind_analysis = evaluate_industry_and_peers(sector_code, stock_raw)
+        
+        if not ind_analysis.get("benchmark_pe") or not ind_analysis.get("benchmark_pb"):
+            raise RuntimeError("Chưa có bộ dữ liệu so sánh ngành phù hợp cho mã này. Hệ thống không tự gán ngành thép hoặc định giá khi thiếu dữ liệu ngành.")
+        if not tech_analysis:
+            raise RuntimeError("Không đủ dữ liệu giá để phân tích kỹ thuật.")
+
+        val_analysis = perform_valuation(
+            stock_raw,
+            fund_analysis,
+            ind_analysis,
+            beta=tech_analysis.get("beta", 1.1),
+            custom_wacc=wacc_input,
+            custom_g=g_input
+        )
+        scorecard_analysis = calculate_quant_scorecard(
+            fund_analysis,
+            tech_analysis,
+            val_analysis,
+            ind_analysis,
+            macro_analysis
+        )
+        scenario_analysis = build_scenario_matrix(
+            val_analysis["current_price"],
+            val_analysis["blended_target_price"],
+            fund_analysis,
+            tech_analysis
+        )
+
+except Exception as exc:
+    st.error(f"Không thể đưa ra khuyến nghị có cơ sở cho {selected_ticker}: {exc}")
+    st.info("Bạn có thể nhập mã cổ phiếu khác; chỉ mã có giá, BCTC và dữ liệu ngành phù hợp mới được định giá. Không tự dùng số liệu của HPG cho mã khác.")
+    st.stop()
 
 # ----------------- HEADER & EXECUTIVE KPI CARDS -----------------
 st.markdown(f"<div class='main-title'>HỆ THỐNG PHÂN TÍCH CƠ HỘI ĐẦU TƯ: {selected_ticker} ({stock_raw.get('exchange', 'HOSE')})</div>", unsafe_allow_html=True)
@@ -555,7 +567,7 @@ with tab4:
         st.dataframe(pd.DataFrame(score_breakdown), hide_index=True, use_container_width=True)
         
         st.markdown(f"**Tổng điểm Multi-Factor:** `{total_score:.1f} / 100`  👉  **Xếp hạng:** `{rating}`")
-        st.markdown(f"**Chiến lược hành động:** {scorecard_analysis.get('action_guide', '')}")
+        st.markdown(f"**Chiến lược hành động dựa trên dữ liệu mã {selected_ticker}:** {scorecard_analysis.get('action_guide', '')}")
 
     st.markdown("##### 📌 Phân tích Điểm mạnh & Rủi ro Từ Scorecard:")
     c_str, c_rsk = st.columns(2)
