@@ -173,6 +173,33 @@ def calculate_quant_scorecard(
             action_guide = item["action"]
             break
 
+    # Hướng dẫn hành động theo bằng chứng của từng mã; không lặp câu chung.
+    upside = valuation_analysis.get("blended_upside", 0.0)
+    rsi = technical_analysis.get("rsi")
+    trend = technical_analysis.get("overall_signal", "CHƯA RÕ")
+    roe_value = fundamental_analysis.get("roe")
+    debt_ratio = fundamental_analysis.get("debt_to_equity")
+    symbol = fundamental_analysis.get("ticker") or valuation_analysis.get("ticker") or "cổ phiếu"
+    evidence = [f"giá mục tiêu chênh thị giá {upside:+.1f}%"]
+    if rsi is not None:
+        evidence.append(f"RSI {rsi:.1f}")
+    if roe_value is not None:
+        evidence.append(f"ROE {roe_value:.1f}%")
+    if debt_ratio is not None:
+        evidence.append(f"D/E {debt_ratio:.2f} lần")
+    evidence.append(f"tín hiệu kỹ thuật: {trend}")
+    detail = "; ".join(evidence)
+    if upside <= -10:
+        action_guide = f"Ưu tiên tránh mua mới/đánh giá lại định giá ({detail})."
+    elif trend == "TIÊU CỰC (BEARISH)":
+        action_guide = f"Chờ giá vượt MA20/MA50 và thanh khoản cải thiện; không mua đuổi ({detail})."
+    elif upside >= 20 and total_score >= 65:
+        action_guide = f"Có thể xem xét giải ngân từng phần sau khi xác nhận giá và khối lượng ({detail})."
+    elif upside >= 5:
+        action_guide = f"Đưa vào danh sách theo dõi, ưu tiên vùng hỗ trợ và mức định giá hợp lý ({detail})."
+    else:
+        action_guide = f"Chưa có biên an toàn rõ ràng; chờ thêm tín hiệu và cập nhật BCTC ({detail})."
+
     pillars = {
         "growth": {"score": round(growth_score, 1), "max": 20, "label": "Tăng trưởng"},
         "profitability": {"score": round(quality_score, 1), "max": 25, "label": "Khả năng sinh lời & Chất lượng"},
