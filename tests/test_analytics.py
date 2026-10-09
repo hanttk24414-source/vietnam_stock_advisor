@@ -3,6 +3,7 @@ Unit tests kiểm tra các thuật toán phân tích kỹ thuật, cơ bản, đ
 """
 
 import unittest
+import os
 import numpy as np
 import pandas as pd
 from analytics.macro_engine import analyze_macro_environment
@@ -17,6 +18,7 @@ from data.stock_loader import fetch_stock_fundamentals, fetch_stock_price_histor
 class TestAnalytics(unittest.TestCase):
 
     def setUp(self):
+        os.environ['STOCK_ADVISOR_DEMO'] = '1'
         self.macro_raw = fetch_macro_indicators()
         self.stock_raw = fetch_stock_fundamentals("HPG")
         self.price_df = fetch_stock_price_history("HPG", 120)
