@@ -13,6 +13,7 @@ import pandas as pd
 import requests
 import yfinance as yf
 from config import CACHE_DIR, MACRO_DEFAULTS
+from data.dnse_loader import dnse_configured, fetch_dnse_history
 
 MACRO_CACHE_FILE = CACHE_DIR / "macro_data.json"
 
@@ -41,6 +42,12 @@ def fetch_vnindex_history(days: int = 365) -> pd.DataFrame:
     Tải lịch sử điểm số và khối lượng giao dịch của chỉ số VN-Index
     từ VNDirect Chart API. Có cơ chế fallback tự động.
     """
+    if dnse_configured():
+        try:
+            return fetch_dnse_history("VNINDEX", days)
+        except Exception as exc:
+            print(f"[Warning] DNSE VNINDEX không khả dụng: {exc}. Thử VNDirect.")
+
     to_time = int(time.time())
     from_time = to_time - int(days * 86400 * 1.5) # lấy dư ngày giao dịch
     url = f"https://dchart-api.vndirect.com.vn/dchart/history?resolution=D&symbol=VNINDEX&from={from_time}&to={to_time}"
