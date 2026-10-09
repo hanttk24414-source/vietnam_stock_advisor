@@ -94,7 +94,12 @@ class NumberedCanvas(canvas.Canvas):
 
         self.setFont("Arial", 7.5)
         self.setFillColor(colors.HexColor("#718096"))
-        disclaimer_short = "Nguồn: Dữ liệu kiểm chứng từ HOSE, VNDirect, Yahoo Finance & BCTC kiểm toán. Báo cáo nhằm mục đích tham khảo đầu tư."
+        demo_mode = os.getenv("STOCK_ADVISOR_DEMO", "").strip().lower() in {"1", "true", "yes"}
+        disclaimer_short = (
+            "DEMO - SO LIEU MAU CHUA XAC MINH - KHONG DUNG DE DAU TU"
+            if demo_mode else
+            "Nguon: can doi chieu gia, BCTC va vi mo truoc khi su dung."
+        )
         self.drawString(36, 22, disclaimer_short)
 
         page_str = f"Trang {self._pageNumber} / {page_count}"
