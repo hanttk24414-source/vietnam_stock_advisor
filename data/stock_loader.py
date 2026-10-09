@@ -18,6 +18,7 @@ import requests
 import yfinance as yf
 
 from config import CACHE_DIR, SUPPORTED_TICKERS
+from data.dnse_loader import dnse_configured, fetch_dnse_history
 
 def _demo_mode():
     return os.getenv('STOCK_ADVISOR_DEMO', '').lower() in {'1', 'true', 'yes'}
@@ -55,6 +56,13 @@ def fetch_stock_price_history(ticker: str, days: int = 365) -> pd.DataFrame:
     """
     sym = clean_ticker(ticker)
     
+    # 0. DNSE là nguồn giá ưu tiên khi người dùng cấu hình API Key/Secret.
+    if dnse_configured():
+        try:
+            return fetch_dnse_history(sym, days)
+        except Exception as exc:
+            print(f"[Warning] DNSE không trả dữ liệu cho {sym}: {exc}. Thử VNDirect/Yahoo.")
+
     # 1. Thử VNDirect API
     to_time = int(time.time())
     from_time = to_time - int(days * 86400 * 1.5)
